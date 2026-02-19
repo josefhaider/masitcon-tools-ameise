@@ -1,73 +1,72 @@
-# Welcome to your Lovable project
+# masitcon Zeiterfassung (Ameise)
 
-## Project info
+Professionelle Arbeitszeiterfassungs-Suite fuer masitcon.
 
-**URL**: https://lovable.dev/projects/86835e0b-9d2e-4ebe-99d3-7c11a9e27910
+## Tech Stack
 
-## How can I edit this code?
+- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui
+- **Backend**: Supabase (Auth, PostgreSQL, Edge Functions, RLS)
+- **Charts**: Recharts
+- **PDF**: jsPDF + AutoTable
 
-There are several ways of editing your application.
+## Voraussetzungen
 
-**Use Lovable**
+- Node.js >= 18
+- Docker (fuer lokale Supabase-Instanz)
+- Supabase CLI
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/86835e0b-9d2e-4ebe-99d3-7c11a9e27910) and start prompting.
+## Lokale Entwicklung
 
-Changes made via Lovable will be committed automatically to this repo.
+```bash
+# 1. Dependencies installieren
+npm install
 
-**Use your preferred IDE**
+# 2. .env anlegen (siehe .env.example)
+cp .env.example .env
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+# 3. Lokale Supabase starten
+supabase start
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# 4. Dev-Server starten
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Die App laeuft auf http://localhost:8080.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Scripts
 
-**Use GitHub Codespaces**
+| Script         | Beschreibung                          |
+|----------------|---------------------------------------|
+| `npm run dev`  | Dev-Server starten                    |
+| `npm run build`| Produktions-Build                     |
+| `npm run lint` | ESLint ausfuehren                     |
+| `npm run format`| Prettier auf src/ ausfuehren         |
+| `npm run preview`| Build-Preview                       |
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Supabase
 
-## What technologies are used for this project?
+Lokale Supabase-Instanz mit Custom-Ports (siehe `supabase/config.toml`):
 
-This project is built with:
+| Service   | Port  |
+|-----------|-------|
+| API       | 54331 |
+| DB        | 54332 |
+| Studio    | 54333 |
+| Inbucket  | 54334 |
+| Analytics | 54337 |
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+Edge Functions werden mit `supabase functions serve --env-file supabase/.env` gestartet.
 
-## How can I deploy this project?
+## Projektstruktur
 
-Simply open [Lovable](https://lovable.dev/projects/86835e0b-9d2e-4ebe-99d3-7c11a9e27910) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+```
+src/
+  components/     # React-Komponenten
+  hooks/          # Custom React Hooks
+  integrations/   # Supabase Client + Types
+  lib/            # Utilities (Berechnungen, PDF, Audit)
+  pages/          # Seiten (Dashboard, Auth, NotFound)
+supabase/
+  functions/      # Edge Functions (Deno)
+  migrations/     # SQL-Migrationen
+```

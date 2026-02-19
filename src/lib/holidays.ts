@@ -226,8 +226,8 @@ export const generateBavarianSchoolHolidays = (year: number): Array<{
   years.forEach(y => {
     const yearHolidays = allHolidays[y] || [];
     yearHolidays.forEach(h => {
-      const startYear = parseInt(h.start_date.substring(0, 4));
-      const endYear = parseInt(h.end_date.substring(0, 4));
+      const startYear = parseInt(h.start_date.substring(0, 4), 10);
+      const endYear = parseInt(h.end_date.substring(0, 4), 10);
       
       // Prüfe ob die Ferien im ausgewählten Jahr liegen
       if (startYear === year || endYear === year) {

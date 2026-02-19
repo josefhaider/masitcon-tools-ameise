@@ -216,7 +216,7 @@ const BalanceCorrectionManager = () => {
       vacation_days_adjustment: correctionType === 'vacation' ? adjustment : null,
       reason: reason.trim(),
       created_by: user.id,
-      applies_to_year: appliesYear ? parseInt(appliesYear) : null
+      applies_to_year: appliesYear ? parseInt(appliesYear, 10) : null
     };
 
     const { data, error } = await supabase

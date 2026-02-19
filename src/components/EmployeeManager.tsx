@@ -268,8 +268,8 @@ const EmployeeManager = () => {
 
       setProfiles(profilesData || []);
       setEmployeeOverviews(overviews);
-    } catch (error: any) {
-      toast.error("Mitarbeiter konnten nicht geladen werden: " + error.message);
+    } catch (error: unknown) {
+      toast.error("Mitarbeiter konnten nicht geladen werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"));
     } finally {
       setLoading(false);
     }
@@ -340,8 +340,8 @@ const EmployeeManager = () => {
       );
 
       setTeams(teamsWithCounts);
-    } catch (error: any) {
-      toast.error("Teams konnten nicht geladen werden: " + error.message);
+    } catch (error: unknown) {
+      toast.error("Teams konnten nicht geladen werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"));
     }
   };
 
@@ -473,9 +473,9 @@ const EmployeeManager = () => {
 
       setEmployeeEmail(editedEmail.trim());
       toast.success('E-Mail-Adresse aktualisiert');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error updating email:', error);
-      toast.error(error.message || "E-Mail konnte nicht geändert werden");
+      toast.error(error instanceof Error ? error.message : "E-Mail konnte nicht geändert werden");
     } finally {
       setSavingEmail(false);
     }
@@ -502,9 +502,9 @@ const EmployeeManager = () => {
 
       setNewPassword("");
       toast.success('Passwort wurde zurückgesetzt');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error resetting password:', error);
-      toast.error(error.message || "Passwort konnte nicht zurückgesetzt werden");
+      toast.error(error instanceof Error ? error.message : "Passwort konnte nicht zurückgesetzt werden");
     } finally {
       setResettingPassword(false);
     }
@@ -529,9 +529,9 @@ const EmployeeManager = () => {
         setResetLink(data.reset_link);
         toast.success('Passwort-Reset-Link generiert');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error generating reset link:', error);
-      toast.error(error.message || "Reset-Link konnte nicht generiert werden");
+      toast.error(error instanceof Error ? error.message : "Reset-Link konnte nicht generiert werden");
     } finally {
       setResettingPassword(false);
     }
@@ -591,9 +591,9 @@ const EmployeeManager = () => {
       setIsArchived(!isArchived);
       toast.success(isArchived ? 'Mitarbeiter reaktiviert' : 'Mitarbeiter archiviert');
       loadEmployeeOverviews();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error archiving employee:', error);
-      toast.error(error.message || "Aktion konnte nicht ausgeführt werden");
+      toast.error(error instanceof Error ? error.message : "Aktion konnte nicht ausgeführt werden");
     } finally {
       setArchiving(false);
     }
@@ -625,9 +625,9 @@ const EmployeeManager = () => {
       setDeleteDialogOpen(false);
       setDeleteConfirmationCode("");
       handleBackToOverview();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error deleting employee:', error);
-      toast.error(error.message || "Mitarbeiter konnte nicht gelöscht werden");
+      toast.error(error instanceof Error ? error.message : "Mitarbeiter konnte nicht gelöscht werden");
     } finally {
       setDeleting(false);
     }
@@ -653,8 +653,8 @@ const EmployeeManager = () => {
 
       setAnnualVacationDays(newValue);
       toast.success('Urlaubstage aktualisiert');
-    } catch (error: any) {
-      toast.error("Urlaubstage konnten nicht gespeichert werden: " + error.message);
+    } catch (error: unknown) {
+      toast.error("Urlaubstage konnten nicht gespeichert werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"));
     } finally {
       setSavingVacationDays(false);
     }
@@ -680,8 +680,8 @@ const EmployeeManager = () => {
 
       toast.success('Profil aktualisiert');
       loadEmployeeOverviews();
-    } catch (error: any) {
-      toast.error("Profil konnte nicht gespeichert werden: " + error.message);
+    } catch (error: unknown) {
+      toast.error("Profil konnte nicht gespeichert werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"));
     } finally {
       setSavingProfile(false);
     }
@@ -708,8 +708,8 @@ const EmployeeManager = () => {
       setTimeTrackingExempt(checked);
       toast.success(checked ? 'Zeiterfassung deaktiviert' : 'Zeiterfassung aktiviert');
       loadEmployeeOverviews();
-    } catch (error: any) {
-      toast.error("Einstellung konnte nicht geändert werden: " + error.message);
+    } catch (error: unknown) {
+      toast.error("Einstellung konnte nicht geändert werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"));
     } finally {
       setSavingExempt(false);
     }
@@ -745,8 +745,8 @@ const EmployeeManager = () => {
       }
       
       await loadEmployeeRoles();
-    } catch (error: any) {
-      toast.error("Rolle konnte nicht geändert werden: " + error.message);
+    } catch (error: unknown) {
+      toast.error("Rolle konnte nicht geändert werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"));
     } finally {
       setSavingRoles(false);
     }
@@ -777,8 +777,8 @@ const EmployeeManager = () => {
       setSelectedTeamToAdd("");
       loadEmployeeTeams();
       loadTeams();
-    } catch (error: any) {
-      toast.error("Fehler beim Hinzufügen: " + error.message);
+    } catch (error: unknown) {
+      toast.error("Fehler beim Hinzufügen: " + (error instanceof Error ? error.message : "Unbekannter Fehler"));
     }
   };
 
@@ -794,8 +794,8 @@ const EmployeeManager = () => {
       toast.success("Team entfernt");
       loadEmployeeTeams();
       loadTeams();
-    } catch (error: any) {
-      toast.error("Fehler beim Entfernen: " + error.message);
+    } catch (error: unknown) {
+      toast.error("Fehler beim Entfernen: " + (error instanceof Error ? error.message : "Unbekannter Fehler"));
     }
   };
 
@@ -852,9 +852,9 @@ const EmployeeManager = () => {
       if (data?.user_id) {
         setSelectedUserId(data.user_id);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error creating employee:', error);
-      toast.error(error.message || "Fehler beim Anlegen des Mitarbeiters");
+      toast.error(error instanceof Error ? error.message : "Fehler beim Anlegen des Mitarbeiters");
     } finally {
       setCreatingEmployee(false);
     }

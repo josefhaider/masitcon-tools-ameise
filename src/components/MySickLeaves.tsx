@@ -144,7 +144,7 @@ export default function MySickLeaves({ refreshTrigger }: MySickLeavesProps) {
       toast.success('Krankmeldung gelöscht');
       setDeleteConfirmId(null);
       loadSickLeaves();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error deleting sick leave:', error);
       toast.error('Fehler beim Löschen der Krankmeldung');
     }

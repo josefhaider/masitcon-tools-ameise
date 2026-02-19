@@ -159,10 +159,10 @@ export default function YearlyVacationCalendar() {
         team_color: m.teams?.color || '#3B82F6',
       }));
       setTeamMemberships(memberships);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Fehler",
-        description: "Teams konnten nicht geladen werden: " + error.message,
+        description: "Teams konnten nicht geladen werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"),
         variant: "destructive",
       });
     }
@@ -270,10 +270,10 @@ export default function YearlyVacationCalendar() {
       });
 
       setEmployeeAbsences(result);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Fehler",
-        description: "Abwesenheiten konnten nicht geladen werden: " + error.message,
+        description: "Abwesenheiten konnten nicht geladen werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"),
         variant: "destructive",
       });
     } finally {

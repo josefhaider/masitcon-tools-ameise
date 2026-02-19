@@ -54,7 +54,7 @@ const TimeEntryForm = ({ userId }: TimeEntryFormProps) => {
     const date = formData.get('date') as string;
     const startTime = formData.get('startTime') as string;
     const endTime = formData.get('endTime') as string;
-    const breakMinutes = parseInt(formData.get('breakMinutes') as string) || 0;
+    const breakMinutes = parseInt(formData.get('breakMinutes') as string, 10) || 0;
     const notes = formData.get('notes') as string;
 
     const { error } = await supabase.from('time_entries').insert({

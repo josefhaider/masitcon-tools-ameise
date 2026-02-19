@@ -5,16 +5,25 @@ import { format, eachDayOfInterval, parseISO, isWeekend } from 'date-fns';
  * Lädt alle Feiertage für einen Zeitraum aus der Datenbank
  */
 const getHolidaysSet = async (startDate: Date, endDate: Date): Promise<Set<string>> => {
-  const startStr = format(startDate, 'yyyy-MM-dd');
-  const endStr = format(endDate, 'yyyy-MM-dd');
-  
-  const { data: holidays } = await supabase
-    .from('holidays')
-    .select('date')
-    .gte('date', startStr)
-    .lte('date', endStr);
-  
-  return new Set((holidays || []).map(h => h.date));
+  try {
+    const startStr = format(startDate, 'yyyy-MM-dd');
+    const endStr = format(endDate, 'yyyy-MM-dd');
+    
+    const { data: holidays, error } = await supabase
+      .from('holidays')
+      .select('date')
+      .gte('date', startStr)
+      .lte('date', endStr);
+    
+    if (error) {
+      console.error('Fehler beim Laden der Feiertage:', error);
+      return new Set();
+    }
+    return new Set((holidays || []).map(h => h.date));
+  } catch (err) {
+    console.error('Unerwarteter Fehler in getHolidaysSet:', err);
+    return new Set();
+  }
 };
 
 /**
@@ -29,12 +38,17 @@ const getWorkScheduleDays = async (
   const startStr = format(startDate, 'yyyy-MM-dd');
   const endStr = format(endDate, 'yyyy-MM-dd');
   
-  const { data: schedules } = await supabase
+  const { data: schedules, error } = await supabase
     .from('employee_work_schedules')
     .select('day_of_week, valid_from, valid_to')
     .eq('user_id', userId)
     .eq('is_active', true)
     .or(`valid_from.lte.${endStr},valid_to.is.null,valid_to.gte.${startStr}`);
+  
+  if (error) {
+    console.error('Fehler beim Laden der Arbeitszeitplaene:', error);
+    return new Map();
+  }
   
   // Map: Datum -> Set von Wochentagen an denen gearbeitet wird
   const dateToWorkDays = new Map<string, Set<number>>();

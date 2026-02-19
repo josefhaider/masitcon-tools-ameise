@@ -152,7 +152,7 @@ export function SplitTimeDialog({
               min={0}
               max={120}
               value={breakMinutes}
-              onChange={(e) => setBreakMinutes(parseInt(e.target.value) || 0)}
+              onChange={(e) => setBreakMinutes(parseInt(e.target.value, 10) || 0)}
             />
           </div>
 

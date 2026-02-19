@@ -71,10 +71,10 @@ export default function SchoolHolidayManager() {
       });
       
       setSchoolHolidays(filtered);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Fehler",
-        description: "Schulferien konnten nicht geladen werden: " + error.message,
+        description: "Schulferien konnten nicht geladen werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"),
         variant: "destructive",
       });
     } finally {
@@ -111,10 +111,10 @@ export default function SchoolHolidayManager() {
       setNewHoliday({ name: "", start_date: "", end_date: "", school_year: "" });
       setDialogOpen(false);
       loadSchoolHolidays();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Fehler",
-        description: "Schulferien konnten nicht hinzugefügt werden: " + error.message,
+        description: "Schulferien konnten nicht hinzugefügt werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"),
         variant: "destructive",
       });
     }
@@ -132,10 +132,10 @@ export default function SchoolHolidayManager() {
       });
 
       loadSchoolHolidays();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Fehler",
-        description: "Schulferien konnten nicht gelöscht werden: " + error.message,
+        description: "Schulferien konnten nicht gelöscht werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"),
         variant: "destructive",
       });
     }
@@ -194,10 +194,10 @@ export default function SchoolHolidayManager() {
       });
 
       loadSchoolHolidays();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Fehler",
-        description: "Schulferien konnten nicht generiert werden: " + error.message,
+        description: "Schulferien konnten nicht generiert werden: " + (error instanceof Error ? error.message : "Unbekannter Fehler"),
         variant: "destructive",
       });
     }

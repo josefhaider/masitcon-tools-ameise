@@ -1,13 +1,17 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('Origin') ?? '';
+  const allowed = Deno.env.get('ALLOWED_ORIGIN') || 'http://127.0.0.1:8080';
+  const allowOrigin = origin === allowed ? origin : allowed;
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  };
+}
 
-serve(async (req) => {
-  // Handle CORS preflight requests
+Deno.serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -105,11 +109,26 @@ serve(async (req) => {
 
     console.log('Auth user created:', authData.user.id);
 
-    // Wait a moment for the trigger to create the profile
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Poll for profile creation by trigger (max 5s)
+    let profileReady = false;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const { data: profile } = await adminClient
+        .from('profiles')
+        .select('id')
+        .eq('id', authData.user.id)
+        .maybeSingle();
+      if (profile) {
+        profileReady = true;
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
 
-    // Update profile with employee number if provided
-    if (employee_number) {
+    if (!profileReady) {
+      console.warn('Profile not created by trigger after 5s for:', authData.user.id);
+    }
+
+    if (employee_number && profileReady) {
       console.log('Updating profile for:', authData.user.id);
       const { error: profileError } = await adminClient
         .from('profiles')
@@ -118,8 +137,6 @@ serve(async (req) => {
 
       if (profileError) {
         console.error('Profile update failed:', profileError);
-        // Don't fail the entire operation if profile update fails
-        // The user was created successfully
       }
     }
 

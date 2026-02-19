@@ -110,7 +110,7 @@ export default function EditSickLeaveDialog({
       toast.success('Krankmeldung aktualisiert');
       onOpenChange(false);
       onSuccess();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error updating sick leave:', error);
       toast.error('Fehler beim Aktualisieren der Krankmeldung');
     } finally {

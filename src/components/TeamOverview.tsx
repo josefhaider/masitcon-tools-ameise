@@ -497,7 +497,7 @@ export const TeamOverview = () => {
               <span className="text-sm font-medium">Jahr:</span>
               <Select
                 value={selectedYear.toString()}
-                onValueChange={(val) => setSelectedYear(parseInt(val))}
+                onValueChange={(val) => setSelectedYear(parseInt(val, 10))}
               >
                 <SelectTrigger className="w-24">
                   <SelectValue />
@@ -513,7 +513,7 @@ export const TeamOverview = () => {
               <span className="text-sm font-medium">Monat:</span>
               <Select
                 value={selectedMonth.toString()}
-                onValueChange={(val) => setSelectedMonth(parseInt(val))}
+                onValueChange={(val) => setSelectedMonth(parseInt(val, 10))}
               >
                 <SelectTrigger className="w-32">
                   <SelectValue />

@@ -1,12 +1,18 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get("Origin") ?? "";
+  const allowed = Deno.env.get("ALLOWED_ORIGIN") || "http://127.0.0.1:8080";
+  const allowOrigin = origin === allowed ? origin : allowed;
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  };
+}
 
 Deno.serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -26,8 +32,16 @@ Deno.serve(async (req) => {
     // Use service role client for all data operations
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    const body = await req.json();
-    const { action, password, user_email } = body;
+    let body: Record<string, unknown>;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON in request body" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    const { action, password, user_email } = body as { action?: string; password?: string; user_email?: string };
 
     // Validate that user_email is provided
     if (!user_email) {
@@ -77,9 +91,9 @@ Deno.serve(async (req) => {
     const user = { id: userProfile.id, email: userProfile.email };
 
     if (action === "export") {
-      return await handleExport(supabase, body, user, supabaseUrl);
+      return await handleExport(supabase, body, user, supabaseUrl, corsHeaders);
     } else if (action === "import") {
-      return await handleImport(supabase, body, user);
+      return await handleImport(supabase, body, user, corsHeaders);
     } else {
       return new Response(
         JSON.stringify({ error: "Invalid action. Use 'export' or 'import'" }),
@@ -89,7 +103,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error("Data transfer error:", error);
     return new Response(
-      JSON.stringify({ error: error.message || "Internal server error" }),
+      JSON.stringify({ error: error instanceof Error ? error.message : "Internal server error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
@@ -147,7 +161,7 @@ async function buildTeamNameMap(supabase: any, teamIds: string[]): Promise<Map<s
 }
 
 // ─── EXPORT ───
-async function handleExport(supabase: any, body: any, user: any, supabaseUrl: string) {
+async function handleExport(supabase: any, body: any, user: any, supabaseUrl: string, corsHeaders: Record<string, string>) {
   const { employee_emails } = body;
 
   if (!employee_emails || !Array.isArray(employee_emails) || employee_emails.length === 0) {
@@ -288,7 +302,7 @@ async function handleExport(supabase: any, body: any, user: any, supabaseUrl: st
 }
 
 // ─── IMPORT ───
-async function handleImport(supabase: any, body: any, user: any) {
+async function handleImport(supabase: any, body: any, user: any, corsHeaders: Record<string, string>) {
   const { data: importData } = body;
 
   if (!importData || !importData.employees || !Array.isArray(importData.employees)) {
@@ -490,11 +504,11 @@ async function handleImport(supabase: any, body: any, user: any) {
           roles: emp.roles?.length ?? 0,
         },
       });
-    } catch (err) {
+    } catch (err: unknown) {
       results.push({
         email: emp.email,
         status: "error",
-        reason: err.message || "Unknown error",
+        reason: err instanceof Error ? err.message : "Unknown error",
       });
     }
   }

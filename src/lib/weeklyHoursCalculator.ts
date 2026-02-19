@@ -5,19 +5,20 @@ import { format } from "date-fns";
  * Berechnet die wöchentlichen Soll-Stunden aus dem aktiven Arbeitszeitprofil
  */
 export const calculateWeeklyHoursFromSchedule = async (userId: string): Promise<number> => {
-  const today = format(new Date(), 'yyyy-MM-dd');
-  
-  const { data: schedules, error } = await supabase
-    .from('employee_work_schedules')
-    .select('day_of_week, start_time, end_time, break_minutes')
-    .eq('user_id', userId)
-    .eq('is_active', true)
-    .lte('valid_from', today)
-    .or(`valid_to.is.null,valid_to.gte.${today}`);
-  
-  if (error || !schedules || schedules.length === 0) {
-    return 0;
-  }
+  try {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    
+    const { data: schedules, error } = await supabase
+      .from('employee_work_schedules')
+      .select('day_of_week, start_time, end_time, break_minutes')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .lte('valid_from', today)
+      .or(`valid_to.is.null,valid_to.gte.${today}`);
+    
+    if (error || !schedules || schedules.length === 0) {
+      return 0;
+    }
   
   // Summiere Stunden aller Wochentage
   return schedules.reduce((total, s) => {
@@ -30,6 +31,10 @@ export const calculateWeeklyHoursFromSchedule = async (userId: string): Promise<
     const workMinutes = endMinutes - startMinutes - s.break_minutes;
     return total + Math.max(0, workMinutes / 60);
   }, 0);
+  } catch (err) {
+    console.error('Fehler beim Berechnen der Wochenstunden:', err);
+    return 0;
+  }
 };
 
 /**

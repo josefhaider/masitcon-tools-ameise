@@ -223,7 +223,7 @@ const QuickTimeEdit = ({
               type="number"
               min="0"
               value={breakMinutes}
-              onChange={(e) => setBreakMinutes(parseInt(e.target.value) || 0)}
+              onChange={(e) => setBreakMinutes(parseInt(e.target.value, 10) || 0)}
             />
           </div>
 

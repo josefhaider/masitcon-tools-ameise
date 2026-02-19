@@ -93,7 +93,7 @@ export default function SickLeaveForm({ onSuccess }: SickLeaveFormProps) {
       setEndDate(new Date());
       setNotes('');
       onSuccess?.();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error creating sick leave:', error);
       toast.error('Fehler beim Erfassen der Krankmeldung');
     } finally {

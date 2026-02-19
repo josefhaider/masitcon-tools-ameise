@@ -7,3 +7,4 @@ supabase/.temp/
 supabase/.branches/
 supabase/.env
 .claude_reference/
+import_vinzenz_krautz_2025.sql

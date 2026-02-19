@@ -159,9 +159,9 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
         
         onUpdate();
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error creating period:', error);
-      toast.error(error.message || 'Fehler beim Erstellen der Periode');
+      toast.error(error instanceof Error ? error.message : 'Fehler beim Erstellen der Periode');
     }
   };
 
@@ -178,7 +178,7 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
         .update({
           start_time: editingDay.start,
           end_time: editingDay.end,
-          break_minutes: parseInt(editingDay.break) || 0,
+          break_minutes: parseInt(editingDay.break, 10) || 0,
         })
         .eq('id', editingDay.dayId);
 
@@ -196,7 +196,7 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
         newValues: {
           start_time: editingDay.start,
           end_time: editingDay.end,
-          break_minutes: parseInt(editingDay.break) || 0,
+          break_minutes: parseInt(editingDay.break, 10) || 0,
         },
         description: `Arbeitszeit ${weekDay?.label || ''} aktualisiert`,
       });
@@ -204,9 +204,9 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
       toast.success('Arbeitszeit aktualisiert');
       setEditingDay(null);
       onUpdate();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error saving day:', error);
-      toast.error(error.message || 'Fehler beim Speichern');
+      toast.error(error instanceof Error ? error.message : 'Fehler beim Speichern');
     }
   };
 
@@ -226,7 +226,7 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
           day_of_week: addingDay.day_of_week,
           start_time: addingDay.start,
           end_time: addingDay.end,
-          break_minutes: parseInt(addingDay.break) || 0,
+          break_minutes: parseInt(addingDay.break, 10) || 0,
           valid_from: period.valid_from,
           valid_to: period.valid_to,
           is_active: true,
@@ -244,7 +244,7 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
           day_of_week: addingDay.day_of_week,
           start_time: addingDay.start,
           end_time: addingDay.end,
-          break_minutes: parseInt(addingDay.break) || 0,
+          break_minutes: parseInt(addingDay.break, 10) || 0,
           valid_from: period.valid_from,
           valid_to: period.valid_to,
         },
@@ -254,9 +254,9 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
       toast.success('Tag hinzugefügt');
       setAddingDay(null);
       onUpdate();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error adding day:', error);
-      toast.error(error.message || 'Fehler beim Hinzufügen');
+      toast.error(error instanceof Error ? error.message : 'Fehler beim Hinzufügen');
     }
   };
 
@@ -288,9 +288,9 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
 
       toast.success('Tag gelöscht');
       onUpdate();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error deleting day:', error);
-      toast.error(error.message || 'Fehler beim Löschen');
+      toast.error(error instanceof Error ? error.message : 'Fehler beim Löschen');
     }
   };
 
@@ -309,9 +309,9 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
 
       toast.success('Periode beendet');
       onUpdate();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error closing period:', error);
-      toast.error(error.message || 'Fehler beim Beenden der Periode');
+      toast.error(error instanceof Error ? error.message : 'Fehler beim Beenden der Periode');
     }
   };
 
@@ -470,7 +470,7 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
                               <TableCell>
                                 <select
                                   value={addingDay.day_of_week}
-                                  onChange={(e) => setAddingDay({ ...addingDay, day_of_week: parseInt(e.target.value) })}
+                                  onChange={(e) => setAddingDay({ ...addingDay, day_of_week: parseInt(e.target.value, 10) })}
                                   className="w-full p-2 border rounded"
                                 >
                                   {availableDays.map(wd => (

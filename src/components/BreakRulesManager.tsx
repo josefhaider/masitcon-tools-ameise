@@ -136,7 +136,7 @@ const BreakRulesManager = () => {
                 type="number"
                 min="0"
                 value={newRule.break_minutes || ''}
-                onChange={(e) => setNewRule({ ...newRule, break_minutes: parseInt(e.target.value) || 0 })}
+                onChange={(e) => setNewRule({ ...newRule, break_minutes: parseInt(e.target.value, 10) || 0 })}
                 placeholder="z.B. 30"
               />
             </div>
@@ -148,7 +148,7 @@ const BreakRulesManager = () => {
                 type="number"
                 min="0"
                 value={newRule.priority || ''}
-                onChange={(e) => setNewRule({ ...newRule, priority: parseInt(e.target.value) || 0 })}
+                onChange={(e) => setNewRule({ ...newRule, priority: parseInt(e.target.value, 10) || 0 })}
                 placeholder="z.B. 1 (niedrigste zuerst)"
               />
             </div>

@@ -6,8 +6,8 @@ export interface AuditLogEntry {
   action: AuditAction;
   tableName: string;
   recordId?: string;
-  oldValues?: Record<string, any>;
-  newValues?: Record<string, any>;
+  oldValues?: Record<string, unknown>;
+  newValues?: Record<string, unknown>;
   description?: string;
 }
 
@@ -46,8 +46,8 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 /**
  * Hilfsfunktion zum Formatieren von Werten für das Audit-Log
  */
-export function formatAuditValues(obj: Record<string, any>): Record<string, any> {
-  const result: Record<string, any> = {};
+export function formatAuditValues(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     if (value !== undefined) {
       result[key] = value;

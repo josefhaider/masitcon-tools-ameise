@@ -193,8 +193,8 @@ const DataTransferManager = () => {
       }
 
       setExportPassword("");
-    } catch (error: any) {
-      toast.error(error.message || "Export fehlgeschlagen");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Export fehlgeschlagen");
     } finally {
       setExporting(false);
     }
@@ -293,8 +293,8 @@ const DataTransferManager = () => {
       }
 
       setImportPassword("");
-    } catch (error: any) {
-      toast.error(error.message || "Import fehlgeschlagen");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Import fehlgeschlagen");
     } finally {
       setImporting(false);
     }

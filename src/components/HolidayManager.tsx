@@ -37,8 +37,8 @@ export default function HolidayManager() {
 
       if (error) throw error;
       setHolidays(data || []);
-    } catch (error: any) {
-      toast.error('Fehler beim Laden: ' + error.message);
+    } catch (error: unknown) {
+      toast.error('Fehler beim Laden: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'));
     } finally {
       setLoading(false);
     }
@@ -64,11 +64,11 @@ export default function HolidayManager() {
       setNewHoliday({ date: '', name: '' });
       setIsDialogOpen(false);
       loadHolidays();
-    } catch (error: any) {
-      if (error.code === '23505') {
+    } catch (error: unknown) {
+      if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === '23505') {
         toast.error('Feiertag für dieses Datum existiert bereits');
       } else {
-        toast.error('Fehler: ' + error.message);
+        toast.error('Fehler: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'));
       }
     }
   };
@@ -83,8 +83,8 @@ export default function HolidayManager() {
       if (error) throw error;
       toast.success('Feiertag gelöscht');
       loadHolidays();
-    } catch (error: any) {
-      toast.error('Fehler: ' + error.message);
+    } catch (error: unknown) {
+      toast.error('Fehler: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'));
     }
   };
 
@@ -118,8 +118,8 @@ export default function HolidayManager() {
       if (error) throw error;
       toast.success(`${newHolidays.length} Feiertage generiert`);
       loadHolidays();
-    } catch (error: any) {
-      toast.error('Fehler beim Generieren: ' + error.message);
+    } catch (error: unknown) {
+      toast.error('Fehler beim Generieren: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'));
     }
   };
 
@@ -149,7 +149,7 @@ export default function HolidayManager() {
               </Button>
               <Select
                 value={selectedYear.toString()}
-                onValueChange={(v) => setSelectedYear(parseInt(v))}
+                onValueChange={(v) => setSelectedYear(parseInt(v, 10))}
               >
                 <SelectTrigger className="w-[100px]">
                   <SelectValue />
