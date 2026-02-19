@@ -3,6 +3,7 @@
 # masitcon Zeiterfassung (Ameise) - Server Initialisierung
 # ===================================================================
 #
+# Zielplattform: Ubuntu Server 22.04+ (Debian-kompatibel)
 # Generiert für: masitcon-tools-ameise
 # Tech-Stack:    Vite, React, TypeScript, Supabase, Tailwind, shadcn/ui
 # Erkannte Tools: Docker, Node.js, Supabase CLI (optional)
@@ -10,21 +11,21 @@
 # Proxy:         ask
 # Datum:         2025-02-19
 #
-# WIE BOOTSTRAPPEN (frischer Server, noch kein Repo):
+# EINSTIEG: Repo klonen (README) – dann hast du dieses Script.
 #
-# Option A – direkt via curl (Script muss öffentlich erreichbar sein):
-#   curl -fsSL https://raw.githubusercontent.com/josefhaider/masitcon-tools-ameise/master/scripts/server-init.sh | bash
+# Auf dem Server ausführen:
 #
-# Option B – Script per scp auf den Server laden:
+# Option A – Repo lokal geklont, Script per scp auf Server:
 #   scp scripts/server-init.sh user@server:~/
 #   ssh user@server "bash ~/server-init.sh"
 #
-# Das Script klont danach automatisch das Repo und zeigt
-# den Befehl für den nächsten Schritt an:
+# Option B – Ohne lokalen Clone (curl von GitHub):
+#   curl -fsSL https://raw.githubusercontent.com/josefhaider/masitcon-tools-ameise/master/scripts/server-init.sh | bash
+#
+# Das Script klont danach das Repo auf den Server und zeigt:
 #   bash /opt/projects/masitcon-tools-ameise/repo/scripts/deploy.sh
 #
 # Idempotent: Zuerst Bestandsaufnahme – nur fehlende Komponenten werden installiert.
-# Kann auch zur Überprüfung/Aktualisierung erneut ausgeführt werden.
 #
 # ===================================================================
 set -uo pipefail
@@ -339,7 +340,8 @@ harden_ssh() {
     info "Aktueller SSH-Port: ${current_port}"
 
     if $changed; then
-        sudo systemctl restart sshd
+        # Ubuntu/Debian: ssh, RHEL/CentOS: sshd
+        sudo systemctl restart ssh 2>/dev/null || sudo systemctl restart sshd 2>/dev/null
         log "SSH-Konfiguration aktualisiert und neugestartet"
         ilog "SSH: gehärtet, Port ${SSH_PORT}"
     else
@@ -582,7 +584,7 @@ setup_git() {
             echo ""
             cat "${key_file}.pub" | sed 's/^/    /'
             echo ""
-            warn "Key in GitHub hinterlegen bevor deploy.sh ausgeführt wird!"
+            warn "Key in GitHub hinterlegen (README: Repo-Zugriff) bevor das Repo geklont wird!"
             confirm "Key wurde hinterlegt?" "n" || warn "Denk daran den Key zu hinterlegen!"
 
             if ! grep -q "Host github.com" "$HOME/.ssh/config" 2>/dev/null; then
@@ -831,6 +833,8 @@ final_check() {
         echo -e "  ${BOLD}Nächster Schritt:${NC}"
         echo ""
         echo "    bash ${REPO_DIR}/scripts/deploy.sh"
+        echo ""
+        echo -e "  ${BOLD}Repo-Zugriff / SSH-Key:${NC} siehe README"
         echo ""
     else
         echo -e "${BOLD}${YELLOW}╔═══════════════════════════════════════════════════════╗${NC}"

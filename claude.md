@@ -2,7 +2,7 @@
 
 ## Deine Aufgabe
 
-Analysiere dieses Projekt vollständig und generiere ein produktionsreifes `scripts/deploy.sh` im vorgegebenen Stil (siehe unten). Das Skript muss sowohl für den **Linux-Server** (Hetzner) als auch für die **lokale Mac-Entwicklungsumgebung** funktionieren.
+Analysiere dieses Projekt vollständig und generiere ein produktionsreifes `scripts/deploy.sh` im vorgegebenen Stil (siehe unten). **Zielplattform Server: Ubuntu 22.04+** (Hetzner, AWS, etc.). Lokale Entwicklung: Mac oder Linux. Port-Checks nutzen `ss` (Ubuntu-Standard) vor `lsof`.
 
 ---
 

@@ -2,12 +2,68 @@
 
 Professionelle Arbeitszeiterfassungs-Suite fuer masitcon.
 
+**Deployment:** Ubuntu Server 22.04+ (Hetzner, AWS, etc.)
+
 ## Tech Stack
 
 - **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui
 - **Backend**: Supabase (Auth, PostgreSQL, Edge Functions, RLS)
 - **Charts**: Recharts
 - **PDF**: jsPDF + AutoTable
+
+## Repo-Zugriff (Git + SSH-Key)
+
+Vor dem Klonen: SSH-Key einrichten.
+
+### Lokale Entwicklung (persoenlicher Key)
+
+1. **SSH-Key erzeugen** (falls noch keiner existiert):
+   ```bash
+   ssh-keygen -t ed25519 -C "dein@email.de" -f ~/.ssh/id_ed25519
+   ```
+
+2. **Public Key in GitHub hinterlegen:**
+   - GitHub → Einstellungen → SSH and GPG keys → New SSH key
+   - Inhalt von `~/.ssh/id_ed25519.pub` einfuegen
+
+### Server-Deployment (Deploy-Key, read-only)
+
+1. **Auf dem Server:** `server-init.sh` bietet an, einen Deploy-Key zu generieren.
+
+2. **Oder manuell:**
+   ```bash
+   ssh-keygen -t ed25519 -C "deploy@server" -f ~/.ssh/id_ed25519_deploy -N ""
+   cat ~/.ssh/id_ed25519_deploy.pub
+   ```
+
+3. **Deploy Key in GitHub hinterlegen:**
+   - Repo → Settings → Deploy keys → Add deploy key
+   - Public Key einfuegen, Titel z.B. „Server Ameise"
+   - **Write access nicht aktivieren** (read-only reicht)
+
+4. **SSH-Config** (falls mehrere Keys):
+   ```
+   Host github.com
+       HostName github.com
+       User git
+       IdentityFile ~/.ssh/id_ed25519_deploy
+       IdentitiesOnly yes
+   ```
+
+5. **Verbindung testen:**
+   ```bash
+   ssh -T git@github.com
+   # Erwartet: "Hi josefhaider/...! You've successfully authenticated..."
+   ```
+
+## Einstieg
+
+```bash
+git clone git@github.com:josefhaider/masitcon-tools-ameise.git
+cd masitcon-tools-ameise
+```
+
+Damit hast du alles – inkl. `scripts/deploy.sh` und `scripts/server-init.sh`.
 
 ## Voraussetzungen
 
@@ -17,20 +73,15 @@ Professionelle Arbeitszeiterfassungs-Suite fuer masitcon.
 
 ## Lokale Entwicklung
 
-```bash
-# Option A: Deploy-Script (empfohlen – prüft Ports, generiert .env)
-bash scripts/deploy.sh --local
+Nach dem Klonen:
 
-# Option B: Manuell
-npm install
-cp .env.example .env
-supabase start          # Ports 54331-54337 prüfen vorher!
-npm run dev
+```bash
+bash scripts/deploy.sh --local
 ```
 
 Die App laeuft auf http://localhost:8080.
 
-**WICHTIG:** Vor `supabase start` Ports prüfen: `docker ps` und `lsof -iTCP -sTCP:LISTEN -nP | grep 543`
+**WICHTIG:** Vor `supabase start` Ports pruefen: `bash scripts/deploy.sh --check-ports` (oder `ss -tlnp | grep 543` auf Ubuntu)
 
 ## Scripts
 
@@ -60,20 +111,56 @@ Edge Functions werden mit `supabase functions serve --env-file supabase/.env` ge
 
 ## Deploy & Server
 
+### Uebersicht
+
 | Script | Beschreibung |
 |--------|--------------|
 | `bash scripts/deploy.sh --local` | Lokale Dev-Env einrichten und starten |
-| `bash scripts/deploy.sh --backup` | DB-Dump erstellen |
-| `bash scripts/deploy.sh --migrate` | Migrationen ausführen |
-| `bash scripts/deploy.sh --check-ports` | Ports prüfen (bei mehreren Supabase-Instanzen) |
+| `bash scripts/deploy.sh` | Interaktives Server-Setup (Ersteinrichtung) |
+| `bash scripts/deploy.sh --update --env production` | Produktions-Update (git pull + rebuild) |
 | `bash scripts/deploy.sh --update --env staging` | Staging-Update |
-| `bash scripts/deploy.sh --update --env production` | Produktions-Update |
-| `bash scripts/server-init.sh` | Frischen Ubuntu/Debian-Server einrichten |
+| `bash scripts/deploy.sh --status` | Container-Status anzeigen |
+| `bash scripts/deploy.sh --logs` | Container-Logs (live) |
+| `bash scripts/deploy.sh --stop` | Container stoppen |
+| `bash scripts/deploy.sh --restart` | Container neu starten |
+| `bash scripts/deploy.sh --clean` | Container + Volumes entfernen |
+| `bash scripts/deploy.sh --clean --full` | Alles inkl. Verzeichnisse entfernen |
+| `bash scripts/deploy.sh --backup` | DB-Dump erstellen |
+| `bash scripts/deploy.sh --migrate` | Migrationen ausfuehren |
+| `bash scripts/deploy.sh --check-ports` | Ports pruefen (bei mehreren Supabase-Instanzen) |
+| `bash scripts/server-init.sh` | Frischen Ubuntu Server 22.04+ einrichten |
 
-**Staging vs. Produktion:** `.env.staging` und `.env.production` mit jeweiligen Supabase-URLs anlegen. Docker: `BUILD_MODE=staging docker compose up --build`
+### Server-Deployment Flow
 
-Für Server-Deployment: `scripts/server-init.sh` einmalig ausführen, danach `scripts/deploy.sh`.
-Docker-Build: `scripts/Dockerfile`, `scripts/docker-compose.yml`, `scripts/caddy-snippet.conf`.
+1. **Server vorbereiten** (einmalig auf frischem Ubuntu 22.04+):
+   ```bash
+   # Script per scp auf Server kopieren und ausfuehren
+   scp scripts/server-init.sh user@server:~/
+   ssh user@server "bash ~/server-init.sh"
+   ```
+   Installiert Docker, Node.js, Firewall, fail2ban, Reverse Proxy (Caddy/Nginx), klont das Repo.
+
+2. **App deployen** (direkt nach server-init.sh oder fuer Updates):
+   ```bash
+   bash /opt/projects/masitcon-tools-ameise/repo/scripts/deploy.sh
+   ```
+   Fragt interaktiv nach Domain, Supabase-Credentials, baut Docker-Container, startet die App.
+
+3. **Updates einspielen**:
+   ```bash
+   bash scripts/deploy.sh --update --env production
+   ```
+   Zieht den neuesten Stand vom Git, baut Container neu, startet sie.
+
+### Staging vs. Produktion
+
+Das Deploy-Script unterstuetzt zwei Umgebungen: `production` (default) und `staging`.
+
+Beim interaktiven Server-Setup (`deploy.sh` ohne Flags) wird eine `.env.production` bzw. `.env.staging` mit den Supabase-Credentials generiert. Fuer manuelle Docker-Builds:
+
+```bash
+BUILD_MODE=staging docker compose -f scripts/docker-compose.yml up --build
+```
 
 ## Projektstruktur
 
@@ -87,4 +174,11 @@ src/
 supabase/
   functions/      # Edge Functions (Deno)
   migrations/     # SQL-Migrationen
+scripts/
+  deploy.sh       # Deploy & Setup Script
+  server-init.sh  # Server-Initialisierung
+  Dockerfile      # Multi-Stage Docker Build
+  docker-compose.yml      # Produktions-Stack
+  docker-compose.local.yml # Lokaler Dev-Stack
+  caddy-snippet.conf      # Caddy Reverse Proxy Template
 ```

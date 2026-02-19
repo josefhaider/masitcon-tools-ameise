@@ -1,14 +1,14 @@
 # masitcon Zeiterfassung (Ameise) - Produktions/Staging-Stack
 # Nutzt externe Supabase-URL (Cloud oder selbst gehostet)
 #
-# Staging:  BUILD_MODE=staging docker compose up --build
-# Produktion: BUILD_MODE=production docker compose up --build (default)
-# Env-Dateien: .env.staging oder .env.production
+# Staging:    BUILD_MODE=staging docker compose -f scripts/docker-compose.yml up --build
+# Produktion: docker compose -f scripts/docker-compose.yml up --build (default)
+# Env-Dateien: .env.staging oder .env.production im Repo-Root
 
 services:
   app:
     build:
-      context: .
+      context: ..
       dockerfile: scripts/Dockerfile
       args:
         BUILD_MODE: ${BUILD_MODE:-production}
@@ -17,4 +17,9 @@ services:
     ports:
       - "${APP_PORT:-8080}:8080"
     restart: unless-stopped
-    env_file: .env.${BUILD_MODE:-production}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

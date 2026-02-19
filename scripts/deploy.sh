@@ -3,6 +3,9 @@
 # masitcon Zeiterfassung (Ameise) - Deploy & Setup Script
 # ===================================================================
 #
+# Voraussetzung: Repo geklont (siehe README – Einstieg)
+# Zielplattform: Ubuntu Server 22.04+ (--local auch auf Mac)
+#
 # Server Setup:    bash scripts/deploy.sh
 # Lokale Dev-Env:  bash scripts/deploy.sh --local
 # Update:          bash scripts/deploy.sh --update [--env production|staging]
@@ -69,10 +72,11 @@ confirm() {
 }
 
 is_port_free() {
-    if command -v lsof >/dev/null 2>&1; then
-        ! lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null | grep -q ":${1} "
-    elif command -v ss >/dev/null 2>&1; then
+    # Ubuntu/Linux: ss ist Standard, lsof optional
+    if command -v ss >/dev/null 2>&1; then
         ! ss -tlnp 2>/dev/null | grep -q ":${1} "
+    elif command -v lsof >/dev/null 2>&1; then
+        ! lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null | grep -q ":${1} "
     else
         return 1
     fi
@@ -229,8 +233,9 @@ check_prerequisites() {
 check_supabase_cli() {
     if ! command -v supabase >/dev/null 2>&1; then
         err "Supabase CLI nicht gefunden"
-        info "Installation: brew install supabase/tap/supabase  (Mac)"
-        info "              npm install -g supabase             (alternativ)"
+        info "Ubuntu/Debian:  sudo apt install supabase  (oder: https://supabase.com/docs/guides/cli)"
+        info "Mac:            brew install supabase/tap/supabase"
+        info "Alternativ:     npm install -g supabase"
         exit 1
     fi
     log "Supabase CLI $(supabase --version 2>/dev/null || echo 'installiert')"
@@ -253,15 +258,15 @@ get_port_occupant() {
         local dc; dc=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E ":${port}(->|/|[^0-9]|$)" | head -1)
         [ -n "$dc" ] && { echo "Docker: ${dc%% *}"; return; }
     fi
-    # lsof (Mac/Linux)
-    if command -v lsof >/dev/null 2>&1; then
-        local l; l=$(lsof -iTCP:${port} -sTCP:LISTEN -nP 2>/dev/null | tail -1)
-        [ -n "$l" ] && { echo "Prozess: $(echo "$l" | awk '{print $1, $2}')"; return; }
-    fi
-    # ss (Linux)
+    # ss (Ubuntu/Linux – Standard)
     if command -v ss >/dev/null 2>&1; then
         local s; s=$(ss -tlnp 2>/dev/null | grep ":${port} ")
         [ -n "$s" ] && { echo "Socket: $(echo "$s" | awk '{print $6}')"; return; }
+    fi
+    # lsof (Fallback, z.B. Mac)
+    if command -v lsof >/dev/null 2>&1; then
+        local l; l=$(lsof -iTCP:${port} -sTCP:LISTEN -nP 2>/dev/null | tail -1)
+        [ -n "$l" ] && { echo "Prozess: $(echo "$l" | awk '{print $1, $2}')"; return; }
     fi
     echo "unbekannt"
 }
@@ -296,7 +301,7 @@ check_ports_before_supabase() {
         docker ps --format '  {{.Names}} ({{.Ports}})' 2>/dev/null | head -20 || true
         echo ""
         info "Alle Ports 543xx im Einsatz:"
-        (lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null || ss -tlnp 2>/dev/null) | grep -E ":54[0-9]{3}\s" | head -15 || true
+        (ss -tlnp 2>/dev/null || lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null) | grep -E ":54[0-9]{3}\s" | head -15 || true
         echo ""
 
         # Option: Freie Alternativ-Ports finden und config.toml anpassen
@@ -415,34 +420,249 @@ SUPABASEENV
     npm run dev
 }
 
-# ─── Server-Modi (Placeholder – vollständiges Setup siehe Referenz) ─
+# ─── Server: Konfiguration abfragen ─────────────────────────────
+collect_config() {
+    header "Server-Konfiguration"
+
+    # Umgebung abfragen wenn nicht per --env gesetzt
+    if [ "$ENV_EXPLICIT" != true ]; then
+        info "Ziel-Umgebung: 1) production  2) staging"
+        local c; c=$(ask "Auswahl [1/2]" "1")
+        case "$c" in
+            2) ENV_TARGET="staging" ;;
+            *) ENV_TARGET="production" ;;
+        esac
+        # Pfade aktualisieren
+        DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
+        DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
+        DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
+    fi
+    log "Umgebung: ${ENV_TARGET}"
+
+    DEPLOY_DOMAIN=$(ask "Domain (z.B. zeiterfassung.example.com)" "")
+    if [ -z "$DEPLOY_DOMAIN" ]; then
+        err "Domain ist Pflicht"; exit 1
+    fi
+
+    DEPLOY_PROTOCOL=$(ask "Protokoll (http/https)" "https")
+
+    info "Supabase-Zugangsdaten (externe Instanz – Cloud oder selbst gehostet)"
+    DEPLOY_SUPABASE_URL=$(ask "Supabase URL (z.B. https://xxx.supabase.co)" "")
+    DEPLOY_SUPABASE_ANON_KEY=$(ask_secret "Supabase Anon Key")
+
+    DEPLOY_GIT_REMOTE=$(ask "Git Remote URL (SSH)" "git@github.com:josefhaider/masitcon-tools-ameise.git")
+    DEPLOY_GIT_BRANCH=$(ask "Git Branch" "master")
+
+    log "Konfiguration gesammelt"
+}
+
+show_summary() {
+    header "Zusammenfassung"
+    echo -e "  ${BOLD}Umgebung:${NC}    ${ENV_TARGET}"
+    echo -e "  ${BOLD}Domain:${NC}      ${DEPLOY_DOMAIN}"
+    echo -e "  ${BOLD}Protokoll:${NC}   ${DEPLOY_PROTOCOL}"
+    echo -e "  ${BOLD}Supabase:${NC}    ${DEPLOY_SUPABASE_URL}"
+    echo -e "  ${BOLD}Git:${NC}         ${DEPLOY_GIT_REMOTE} (${DEPLOY_GIT_BRANCH})"
+    echo -e "  ${BOLD}App-Port:${NC}    ${APP_PORT}"
+    echo -e "  ${BOLD}Ziel:${NC}        ${DIR_APP}"
+    echo ""
+    confirm "Korrekt? Setup starten?" "j" || exit 0
+}
+
+write_env_file() {
+    local env_file="${DIR_APP}/.env.${ENV_TARGET}"
+    cat > "$env_file" << ENVFILE
+# ${PROJECT_DISPLAY} – ${ENV_TARGET}
+# Generiert von deploy.sh am $(date '+%Y-%m-%d %H:%M')
+VITE_SUPABASE_URL=${DEPLOY_SUPABASE_URL}
+VITE_SUPABASE_ANON_KEY=${DEPLOY_SUPABASE_ANON_KEY}
+ENVFILE
+    chmod 600 "$env_file"
+    log "Env-Datei geschrieben: ${env_file}"
+
+    # deploy.env für spätere --update / --status Aufrufe
+    local deploy_env="${DIR_BASE}/deploy.env.${ENV_TARGET}"
+    cat > "$deploy_env" << DEPLOYENV
+# Deploy-Metadaten – ${ENV_TARGET}
+DIR_APP=${DIR_APP}
+DIR_DATA=${DIR_DATA}
+DIR_CONFIGS=${DIR_CONFIGS}
+DEPLOY_DOMAIN=${DEPLOY_DOMAIN}
+DEPLOY_PROTOCOL=${DEPLOY_PROTOCOL}
+DEPLOY_SUPABASE_URL=${DEPLOY_SUPABASE_URL}
+DEPLOY_GIT_REMOTE=${DEPLOY_GIT_REMOTE}
+DEPLOY_GIT_BRANCH=${DEPLOY_GIT_BRANCH}
+DEPLOYENV
+    chmod 600 "$deploy_env"
+    log "Deploy-Env geschrieben: ${deploy_env}"
+}
+
+wait_for_health() {
+    info "Warte auf Health-Check (max 60s)..."
+    local DC="$1" compose_file="$2"
+    local i=0
+    while [ $i -lt 60 ]; do
+        if $DC -f "$compose_file" ps --format '{{.Status}}' 2>/dev/null | grep -qi "healthy\|running"; then
+            log "Container läuft"
+            return 0
+        fi
+        sleep 2
+        i=$((i + 2))
+    done
+    warn "Health-Check Timeout – Container-Status prüfen: docker ps"
+}
+
+generate_caddy_snippet() {
+    local snippet_file="${DIR_CONFIGS}/caddy-snippet.conf"
+    cat > "$snippet_file" << CADDY
+# ${PROJECT_DISPLAY} – ${ENV_TARGET}
+# In /etc/caddy/Caddyfile einfügen: sudo systemctl reload caddy
+
+${DEPLOY_DOMAIN} {
+    reverse_proxy 127.0.0.1:${APP_PORT}
+    log {
+        output file /var/log/${PROJECT_NAME}/caddy-access.log
+    }
+}
+CADDY
+    log "Caddy-Snippet: ${snippet_file}"
+}
+
+# ─── Server-Setup (Ersteinrichtung) ─────────────────────────────
+setup_server() {
+    header "Server-Setup – ${PROJECT_DISPLAY}"
+
+    check_prerequisites
+    collect_config
+    show_summary
+
+    # Verzeichnisse anlegen
+    for d in "$DIR_APP" "$DIR_DATA" "$DIR_CONFIGS" "$DIR_BACKUPS" "$DIR_LOGS"; do
+        mkdir -p "$d"
+    done
+    log "Verzeichnisse erstellt: ${DIR_BASE}/"
+
+    # Repo: Bereits geklontes Repo nutzen oder neu klonen
+    local SCRIPT_DIR; SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local SCRIPT_REPO_ROOT; SCRIPT_REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+    if [ -d "${DIR_APP}/.git" ]; then
+        info "Repo unter ${DIR_APP} existiert – aktualisiere..."
+        git -C "$DIR_APP" fetch origin
+        git -C "$DIR_APP" checkout "$DEPLOY_GIT_BRANCH"
+        git -C "$DIR_APP" pull origin "$DEPLOY_GIT_BRANCH"
+    elif [ -d "${SCRIPT_REPO_ROOT}/.git" ] && [ "$SCRIPT_REPO_ROOT" != "$DIR_APP" ]; then
+        info "Repo erkannt unter ${SCRIPT_REPO_ROOT} – verlinke..."
+        ln -sfn "$SCRIPT_REPO_ROOT" "$DIR_APP"
+        git -C "$DIR_APP" fetch origin
+        git -C "$DIR_APP" pull origin "$DEPLOY_GIT_BRANCH" 2>/dev/null || true
+    else
+        info "Klone Repo..."
+        git clone --branch "$DEPLOY_GIT_BRANCH" "$DEPLOY_GIT_REMOTE" "$DIR_APP"
+    fi
+    log "Repo: $(git -C "$DIR_APP" rev-parse --short HEAD)"
+
+    # Env-Datei schreiben
+    write_env_file
+
+    # Container bauen und starten (Compose aus dem Repo – context bleibt korrekt)
+    local DC; DC=$(detect_compose)
+    local COMPOSE_FILE="${DIR_APP}/scripts/docker-compose.yml"
+    [ -z "$DC" ] && { err "Docker Compose nicht gefunden"; exit 1; }
+
+    info "Baue und starte Container..."
+    BUILD_MODE="$ENV_TARGET" \
+    VITE_SUPABASE_URL="$DEPLOY_SUPABASE_URL" \
+    VITE_SUPABASE_ANON_KEY="$DEPLOY_SUPABASE_ANON_KEY" \
+    APP_PORT="$APP_PORT" \
+        $DC -f "$COMPOSE_FILE" up -d --build
+
+    wait_for_health "$DC" "$COMPOSE_FILE"
+
+    # Caddy-Snippet generieren
+    generate_caddy_snippet
+
+    # Zeitstempel speichern
+    date '+%Y-%m-%d %H:%M:%S' > "${DIR_BASE}/.last-deploy"
+
+    echo ""
+    echo -e "${BOLD}${GREEN}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${GREEN}║   Deployment abgeschlossen!                          ║${NC}"
+    echo -e "${BOLD}${GREEN}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  ${BOLD}App:${NC}           ${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}"
+    echo -e "  ${BOLD}Umgebung:${NC}      ${ENV_TARGET}"
+    echo -e "  ${BOLD}Container:${NC}     docker ps | grep ${PROJECT_NAME}"
+    echo ""
+    echo -e "  ${BOLD}Nächste Schritte:${NC}"
+    echo "    1. Caddy-Snippet einfügen: ${DIR_CONFIGS}/caddy-snippet.conf"
+    echo "       sudo cp ${DIR_CONFIGS}/caddy-snippet.conf /etc/caddy/conf.d/${PROJECT_NAME}.conf"
+    echo "       sudo systemctl reload caddy"
+    echo "    2. Status prüfen: bash scripts/deploy.sh --status --env ${ENV_TARGET}"
+    echo "    3. Logs:          bash scripts/deploy.sh --logs --env ${ENV_TARGET}"
+    echo ""
+}
+
+# ─── Hilfsfunktion: Compose-Pfad ermitteln ──────────────────────
+get_compose_file() {
+    load_or_init_dirs
+    local cf="${DIR_APP}/scripts/docker-compose.yml"
+    [ -f "$cf" ] && { echo "$cf"; return 0; }
+    echo ""
+    return 1
+}
+
+# ─── Server-Modi ────────────────────────────────────────────────
 do_status() {
     header "Status – ${PROJECT_DISPLAY} (${ENV_TARGET})"
-    load_or_init_dirs
+
+    # Lokal: Supabase + Docker prüfen
+    if [ -d .git ] && [ -f supabase/config.toml ]; then
+        info "Lokale Umgebung erkannt"
+        if command -v supabase >/dev/null 2>&1; then
+            echo ""
+            supabase status 2>/dev/null || info "Supabase nicht gestartet"
+        fi
+        echo ""
+        info "Docker-Container (${PROJECT_NAME}):"
+        docker ps --filter "name=supabase" --filter "name=masitcon" --format "  {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+        return 0
+    fi
+
+    # Server: Compose-Status
+    local cf; cf=$(get_compose_file)
     local DC; DC=$(detect_compose)
-    if [ -f "${DIR_CONFIGS}/docker-compose.yml" ]; then
-        $DC -f "${DIR_CONFIGS}/docker-compose.yml" ps
+    if [ -n "$cf" ]; then
+        $DC -f "$cf" ps
+        echo ""
+        if [ -f "${DIR_BASE}/.last-deploy" ]; then
+            info "Letzter Deploy: $(cat "${DIR_BASE}/.last-deploy")"
+        fi
+        info "Docker Volumes:"
+        docker system df -v 2>/dev/null | grep -E "(VOLUME|${PROJECT_NAME})" | head -10 || true
     else
-        info "Kein Server-Setup – nutze --local für lokale Entwicklung"
+        info "Kein Server-Setup gefunden"
+        info "Nutze --local für lokale Entwicklung oder starte Server-Setup ohne Flags"
     fi
 }
 
 do_logs() {
-    load_or_init_dirs
+    local cf; cf=$(get_compose_file)
     local DC; DC=$(detect_compose)
-    if [ -f "${DIR_CONFIGS}/docker-compose.yml" ]; then
-        $DC -f "${DIR_CONFIGS}/docker-compose.yml" logs -f ${SHOW_LOGS_SERVICE:+$SHOW_LOGS_SERVICE}
+    if [ -n "$cf" ]; then
+        $DC -f "$cf" logs -f ${SHOW_LOGS_SERVICE:+$SHOW_LOGS_SERVICE}
     else
         err "Kein docker-compose.yml gefunden"
+        info "Server-Setup zuerst ausführen: bash scripts/deploy.sh --env ${ENV_TARGET}"
     fi
 }
 
 do_stop() {
     header "Stoppen – ${PROJECT_DISPLAY}"
-    load_or_init_dirs
+    local cf; cf=$(get_compose_file)
     local DC; DC=$(detect_compose)
-    if [ -f "${DIR_CONFIGS}/docker-compose.yml" ]; then
-        $DC -f "${DIR_CONFIGS}/docker-compose.yml" stop
+    if [ -n "$cf" ]; then
+        $DC -f "$cf" stop
         log "Container gestoppt"
     else
         err "Kein docker-compose.yml gefunden"
@@ -451,10 +671,10 @@ do_stop() {
 
 do_restart() {
     header "Neu starten – ${PROJECT_DISPLAY}"
-    load_or_init_dirs
+    local cf; cf=$(get_compose_file)
     local DC; DC=$(detect_compose)
-    if [ -f "${DIR_CONFIGS}/docker-compose.yml" ]; then
-        $DC -f "${DIR_CONFIGS}/docker-compose.yml" restart
+    if [ -n "$cf" ]; then
+        $DC -f "$cf" restart
         log "Container neu gestartet"
     else
         err "Kein docker-compose.yml gefunden"
@@ -462,16 +682,83 @@ do_restart() {
 }
 
 do_update() {
-    header "Update – ${PROJECT_DISPLAY}"
+    header "Update – ${PROJECT_DISPLAY} (${ENV_TARGET})"
     load_or_init_dirs
-    info "Für vollständiges Server-Update: siehe scripts/deploy.sh Referenz"
-    warn "Aktuell: Nutze --local für lokale Entwicklung"
+
+    if [ ! -d "${DIR_APP}/.git" ]; then
+        err "Kein Repo unter ${DIR_APP} – zuerst Server-Setup ausführen"
+        info "bash scripts/deploy.sh --env ${ENV_TARGET}"
+        exit 1
+    fi
+
+    local DC; DC=$(detect_compose)
+    local COMPOSE_FILE="${DIR_APP}/scripts/docker-compose.yml"
+    [ -z "$DC" ] && { err "Docker Compose nicht gefunden"; exit 1; }
+    [ ! -f "$COMPOSE_FILE" ] && { err "Kein docker-compose.yml – zuerst Server-Setup ausführen"; exit 1; }
+
+    # Git pull
+    info "Ziehe neuesten Stand..."
+    git -C "$DIR_APP" fetch origin
+    git -C "$DIR_APP" pull origin "$(git -C "$DIR_APP" rev-parse --abbrev-ref HEAD)"
+    log "Repo aktualisiert: $(git -C "$DIR_APP" rev-parse --short HEAD)"
+
+    # Env-Variablen laden (für Build-Args)
+    local env_file="${DIR_APP}/.env.${ENV_TARGET}"
+    if [ -f "$env_file" ]; then
+        # shellcheck source=/dev/null
+        source "$env_file"
+    fi
+
+    # Container neu bauen und starten
+    info "Baue Container neu..."
+    BUILD_MODE="$ENV_TARGET" \
+    VITE_SUPABASE_URL="${VITE_SUPABASE_URL:-}" \
+    VITE_SUPABASE_ANON_KEY="${VITE_SUPABASE_ANON_KEY:-}" \
+    APP_PORT="${APP_PORT}" \
+        $DC -f "$COMPOSE_FILE" up -d --build
+
+    wait_for_health "$DC" "$COMPOSE_FILE"
+
+    date '+%Y-%m-%d %H:%M:%S' > "${DIR_BASE}/.last-deploy"
+    log "Update abgeschlossen"
 }
 
 do_clean() {
-    header "Projekt entfernen – ${PROJECT_DISPLAY}"
-    warn "Clean-Modus: Nutze --local für lokale Entwicklung"
-    info "Supabase stoppen: supabase stop"
+    header "Projekt entfernen – ${PROJECT_DISPLAY} (${ENV_TARGET})"
+    load_or_init_dirs
+
+    # Lokal
+    if [ -d .git ] && [ -f supabase/config.toml ]; then
+        warn "Lokale Umgebung erkannt"
+        if confirm "Supabase stoppen und lokale .env löschen?" "n"; then
+            supabase stop 2>/dev/null || true
+            rm -f .env supabase/.env
+            log "Lokale Umgebung bereinigt"
+        fi
+        return 0
+    fi
+
+    # Server
+    local cf; cf=$(get_compose_file)
+    local DC; DC=$(detect_compose)
+    if [ -n "$cf" ]; then
+        warn "Dies entfernt alle Container und Volumes für ${ENV_TARGET}!"
+        confirm "Wirklich fortfahren?" "n" || return 0
+        confirm "LETZTE WARNUNG – alle Daten in ${ENV_TARGET} gehen verloren. Sicher?" "n" || return 0
+
+        $DC -f "$cf" down -v
+        log "Container und Volumes entfernt"
+
+        if [ "$CLEAN_FULL" = true ]; then
+            warn "Lösche ${DIR_BASE}/${ENV_TARGET}/ komplett..."
+            rm -rf "${DIR_BASE:?}/${ENV_TARGET}"
+            rm -f "${DIR_BASE}/deploy.env.${ENV_TARGET}"
+            log "Verzeichnisse gelöscht"
+        fi
+    else
+        info "Kein Server-Setup gefunden für ${ENV_TARGET}"
+        info "Für lokale Bereinigung: supabase stop"
+    fi
 }
 
 do_prune() {
@@ -515,6 +802,14 @@ main() {
     echo -e "  ${DIM}Modus: ${MODE}${NC}"
     echo ""
 
+    # Bei --local: Prüfen ob wir im Repo sind
+    if [ "$MODE" = "local" ] && [ ! -d .git ]; then
+        err "Nicht im Repo – zuerst klonen (siehe README)"
+        info "  git clone git@github.com:josefhaider/masitcon-tools-ameise.git"
+        info "  cd masitcon-tools-ameise"
+        exit 1
+    fi
+
     # Umgebung abfragen, wenn für diesen Modus nötig und nicht per --env gesetzt
     case "$MODE" in
         update|status|logs|stop|restart|clean|backup)
@@ -536,7 +831,7 @@ main() {
         migrate)     do_migrate     ;;
         backup)      do_backup      ;;
         check-ports) do_check_ports ;;
-        setup)       info "Vollständiges Server-Setup: siehe .claude_reference/deploy.sh"; exit 0 ;;
+        setup)       setup_server ;;
     esac
 }
 
