@@ -18,27 +18,28 @@ Professionelle Arbeitszeiterfassungs-Suite fuer masitcon.
 ## Lokale Entwicklung
 
 ```bash
-# 1. Dependencies installieren
+# Option A: Deploy-Script (empfohlen – prüft Ports, generiert .env)
+bash scripts/deploy.sh --local
+
+# Option B: Manuell
 npm install
-
-# 2. .env anlegen (siehe .env.example)
 cp .env.example .env
-
-# 3. Lokale Supabase starten
-supabase start
-
-# 4. Dev-Server starten
+supabase start          # Ports 54331-54337 prüfen vorher!
 npm run dev
 ```
 
 Die App laeuft auf http://localhost:8080.
 
+**WICHTIG:** Vor `supabase start` Ports prüfen: `docker ps` und `lsof -iTCP -sTCP:LISTEN -nP | grep 543`
+
 ## Scripts
 
-| Script         | Beschreibung                          |
-|----------------|---------------------------------------|
-| `npm run dev`  | Dev-Server starten                    |
-| `npm run build`| Produktions-Build                     |
+| Script               | Beschreibung                          |
+|----------------------|---------------------------------------|
+| `npm run dev`        | Dev-Server starten                    |
+| `npm run build`      | Produktions-Build (default)            |
+| `npm run build:production` | Produktions-Build (.env.production)   |
+| `npm run build:staging`    | Staging-Build (.env.staging)          |
 | `npm run lint` | ESLint ausfuehren                     |
 | `npm run format`| Prettier auf src/ ausfuehren         |
 | `npm run preview`| Build-Preview                       |
@@ -56,6 +57,23 @@ Lokale Supabase-Instanz mit Custom-Ports (siehe `supabase/config.toml`):
 | Analytics | 54337 |
 
 Edge Functions werden mit `supabase functions serve --env-file supabase/.env` gestartet.
+
+## Deploy & Server
+
+| Script | Beschreibung |
+|--------|--------------|
+| `bash scripts/deploy.sh --local` | Lokale Dev-Env einrichten und starten |
+| `bash scripts/deploy.sh --backup` | DB-Dump erstellen |
+| `bash scripts/deploy.sh --migrate` | Migrationen ausführen |
+| `bash scripts/deploy.sh --check-ports` | Ports prüfen (bei mehreren Supabase-Instanzen) |
+| `bash scripts/deploy.sh --update --env staging` | Staging-Update |
+| `bash scripts/deploy.sh --update --env production` | Produktions-Update |
+| `bash scripts/server-init.sh` | Frischen Ubuntu/Debian-Server einrichten |
+
+**Staging vs. Produktion:** `.env.staging` und `.env.production` mit jeweiligen Supabase-URLs anlegen. Docker: `BUILD_MODE=staging docker compose up --build`
+
+Für Server-Deployment: `scripts/server-init.sh` einmalig ausführen, danach `scripts/deploy.sh`.
+Docker-Build: `scripts/Dockerfile`, `scripts/docker-compose.yml`, `scripts/caddy-snippet.conf`.
 
 ## Projektstruktur
 

@@ -1,0 +1,20 @@
+# masitcon Zeiterfassung (Ameise) - Produktions/Staging-Stack
+# Nutzt externe Supabase-URL (Cloud oder selbst gehostet)
+#
+# Staging:  BUILD_MODE=staging docker compose up --build
+# Produktion: BUILD_MODE=production docker compose up --build (default)
+# Env-Dateien: .env.staging oder .env.production
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+      args:
+        BUILD_MODE: ${BUILD_MODE:-production}
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    restart: unless-stopped
+    env_file: .env.${BUILD_MODE:-production}

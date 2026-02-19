@@ -8,6 +8,8 @@ Analysiere dieses Projekt vollständig und generiere ein produktionsreifes `scri
 
 ## Schritt 1: Analyse (führe diese Checks durch)
 
+**PFLICHT:** Vor jedem Supabase-Start oder Deploy: `bash scripts/deploy.sh --check-ports` ausführen. Auf dem Server laufen mehrere Docker/Supabase-Instanzen – Port-Konflikte vermeiden.
+
 ### package.json
 
 - [ ] Framework erkennen: Next.js / Express / Fastify / Hono / reines Node?
@@ -254,7 +256,7 @@ Bevor du fertig bist, prüfe:
 - [ ] Alle erkannten Env-Variablen werden im Skript abgefragt
 - [ ] Supabase-Migrations-Pfad korrekt gesetzt
 - [ ] Docker-Network-Name eindeutig (keine Konflikte mit anderen Projekten)
-- [ ] Port-Kollisions-Check eingebaut (wie in server-setup.sh)
+- [ ] Port-Check vor Supabase-Start: `--check-ports`, automatisch bei `--local` und `--migrate`; zeigt Belegung (Docker/Prozess), bietet freie Alternativ-Ports
 - [ ] `--clean` fragt zweimal nach Bestätigung
 - [ ] Skript ist executable: `chmod +x scripts/deploy.sh` im README erwähnt
 - [ ] Alle generierten Dateien sind in `.gitignore` geprüft (`.env` aber nicht `.env.example`)
@@ -371,7 +373,16 @@ Dieses Projekt verwendet **eigene Ports** in `supabase/config.toml`, damit es ni
 | Mailpit    | 54334 |
 | Analytics  | 54337 |
 
-**PFLICHT vor jedem `supabase start`:** Prüfe mit `docker ps` und `lsof -iTCP -sTCP:LISTEN -nP | grep 543` ob die konfigurierten Ports frei sind. Falls ein anderes Supabase-Projekt läuft, die Ports in `supabase/config.toml` entsprechend anpassen.
+**PFLICHT vor jedem `supabase start`:** Ports prüfen! Auf dem Server laufen mehrere Docker/Supabase-Instanzen.
+
+```bash
+# Port-Check ausführen (zeigt Belegung, bietet freie Alternativen)
+bash scripts/deploy.sh --check-ports
+```
+
+Das Deploy-Script prüft automatisch vor `--local`, `--migrate` und bei `--check-ports`. Bei Konflikten werden belegte Ports mit Prozess/Container angezeigt; optional kann `supabase/config.toml` mit freien Alternativ-Ports aktualisiert werden.
+
+Manuell: `docker ps` und `lsof -iTCP -sTCP:LISTEN -nP | grep 543`
 
 ### Lokale URLs und Keys
 

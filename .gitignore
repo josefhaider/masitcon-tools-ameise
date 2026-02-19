@@ -1,6 +1,8 @@
 node_modules
 .env
 .env.local
+.env.production
+.env.staging
 dist
 .cursor/
 supabase/.temp/
@@ -8,3 +10,4 @@ supabase/.branches/
 supabase/.env
 .claude_reference/
 import_vinzenz_krautz_2025.sql
+supabase/backups/
