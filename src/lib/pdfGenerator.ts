@@ -258,7 +258,7 @@ export function generateMonthlyHoursReportPDF(data: MonthlyHoursReportData): voi
   });
 
   // Compact summary box
-  let summaryY = doc.lastAutoTable.finalY + 5;
+  const summaryY = doc.lastAutoTable.finalY + 5;
   
   doc.setFillColor(245, 245, 245);
   doc.rect(14, summaryY, 182, 28, 'F');

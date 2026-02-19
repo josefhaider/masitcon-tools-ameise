@@ -4,3 +4,6 @@ node_modules
 dist
 .cursor/
 supabase/.temp/
+supabase/.branches/
+supabase/.env
+.claude_reference/

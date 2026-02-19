@@ -1,4 +1,27 @@
-project_id = "gkmeedrduzzefzwezqlb"
+project_id = "masitcon-tools-ameise-db"
+
+[api]
+enabled = true
+port = 54331
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54332
+major_version = 17
+
+[studio]
+enabled = true
+port = 54333
+
+[inbucket]
+enabled = true
+port = 54334
+
+[analytics]
+enabled = true
+port = 54337
 
 [functions.create-employee]
 verify_jwt = false

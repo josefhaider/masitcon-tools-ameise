@@ -488,7 +488,7 @@ export default function YearlyVacationCalendar() {
       isFirstOfMonth: boolean;
     }> = [];
     
-    let currentDate = new Date(year, 0, 1);
+    const currentDate = new Date(year, 0, 1);
     while (currentDate.getFullYear() === year) {
       days.push({
         date: new Date(currentDate),

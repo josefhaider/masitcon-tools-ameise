@@ -1,17 +1,48 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
-import { toast } from 'sonner';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Download, Upload, Loader2, CheckCircle, XCircle, AlertTriangle, Users } from 'lucide-react';
-import { format } from 'date-fns';
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  Download,
+  Upload,
+  Loader2,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  Users,
+} from "lucide-react";
+import { format } from "date-fns";
 
 interface Profile {
   id: string;
@@ -42,7 +73,7 @@ interface ImportData {
 
 interface ImportResult {
   email: string;
-  status: 'imported' | 'skipped' | 'error' | 'warning';
+  status: "imported" | "skipped" | "error" | "warning";
   reason?: string;
   counts?: Record<string, number>;
 }
@@ -50,16 +81,18 @@ interface ImportResult {
 const DataTransferManager = () => {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedEmails, setSelectedEmails] = useState<Set<string>>(new Set());
-  const [exportPassword, setExportPassword] = useState('');
-  const [importPassword, setImportPassword] = useState('');
+  const [exportPassword, setExportPassword] = useState("");
+  const [importPassword, setImportPassword] = useState("");
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Import state
   const [importData, setImportData] = useState<ImportData | null>(null);
-  const [importResults, setImportResults] = useState<ImportResult[] | null>(null);
-  const [importFileName, setImportFileName] = useState<string>('');
+  const [importResults, setImportResults] = useState<ImportResult[] | null>(
+    null,
+  );
+  const [importFileName, setImportFileName] = useState<string>("");
 
   useEffect(() => {
     loadProfiles();
@@ -67,19 +100,19 @@ const DataTransferManager = () => {
 
   const loadProfiles = async () => {
     const { data, error } = await supabase
-      .from('profiles')
-      .select('id, email, full_name, employee_number, is_archived')
-      .order('full_name');
+      .from("profiles")
+      .select("id, email, full_name, employee_number, is_archived")
+      .order("full_name");
 
     if (error) {
-      toast.error('Fehler beim Laden der Mitarbeiter');
+      toast.error("Fehler beim Laden der Mitarbeiter");
       return;
     }
     setProfiles(data || []);
     setLoading(false);
   };
 
-  const activeProfiles = profiles.filter(p => !p.is_archived);
+  const activeProfiles = profiles.filter((p) => !p.is_archived);
 
   // ─── Export Logic ───
   const toggleEmployee = (email: string) => {
@@ -90,7 +123,7 @@ const DataTransferManager = () => {
   };
 
   const selectAll = () => {
-    setSelectedEmails(new Set(activeProfiles.map(p => p.email)));
+    setSelectedEmails(new Set(activeProfiles.map((p) => p.email)));
   };
 
   const selectNone = () => {
@@ -99,51 +132,55 @@ const DataTransferManager = () => {
 
   const handleExport = async () => {
     if (selectedEmails.size === 0) {
-      toast.error('Bitte mindestens einen Mitarbeiter auswählen');
+      toast.error("Bitte mindestens einen Mitarbeiter auswählen");
       return;
     }
     if (!exportPassword) {
-      toast.error('Bitte Sicherheitskennwort eingeben');
+      toast.error("Bitte Sicherheitskennwort eingeben");
       return;
     }
 
     setExporting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       const userEmail = session?.user?.email;
       if (!userEmail) {
-        toast.error('Nicht angemeldet');
+        toast.error("Nicht angemeldet");
         return;
       }
 
       const response = await fetch(
-        `https://gkmeedrduzzefzwezqlb.supabase.co/functions/v1/employee-data-transfer`,
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/employee-data-transfer`,
         {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            action: 'export',
+            action: "export",
             employee_emails: Array.from(selectedEmails),
             password: exportPassword,
             user_email: userEmail,
           }),
-        }
+        },
       );
 
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.error || 'Export fehlgeschlagen');
+        throw new Error(result.error || "Export fehlgeschlagen");
       }
 
       // Download as JSON file
-      const blob = new Blob([JSON.stringify(result.data, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(result.data, null, 2)], {
+        type: "application/json",
+      });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
-      a.download = `mitarbeiter-export_${format(new Date(), 'yyyy-MM-dd')}.json`;
+      a.download = `mitarbeiter-export_${format(new Date(), "yyyy-MM-dd")}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -155,9 +192,9 @@ const DataTransferManager = () => {
         result.warnings.forEach((w: string) => toast.warning(w));
       }
 
-      setExportPassword('');
+      setExportPassword("");
     } catch (error: any) {
-      toast.error(error.message || 'Export fehlgeschlagen');
+      toast.error(error.message || "Export fehlgeschlagen");
     } finally {
       setExporting(false);
     }
@@ -176,76 +213,88 @@ const DataTransferManager = () => {
       try {
         const parsed = JSON.parse(ev.target?.result as string);
         if (!parsed.employees || !Array.isArray(parsed.employees)) {
-          toast.error('Ungültiges Dateiformat: employees-Array fehlt');
+          toast.error("Ungültiges Dateiformat: employees-Array fehlt");
           setImportData(null);
           return;
         }
         setImportData(parsed);
       } catch {
-        toast.error('Ungültige JSON-Datei');
+        toast.error("Ungültige JSON-Datei");
         setImportData(null);
       }
     };
     reader.readAsText(file);
   };
 
-  const getEmployeeMappingStatus = (email: string): 'found' | 'not_found' => {
-    return profiles.some(p => p.email === email) ? 'found' : 'not_found';
+  const getEmployeeMappingStatus = (email: string): "found" | "not_found" => {
+    return profiles.some((p) => p.email === email) ? "found" : "not_found";
   };
 
   const handleImport = async () => {
     if (!importData) return;
     if (!importPassword) {
-      toast.error('Bitte Sicherheitskennwort eingeben');
+      toast.error("Bitte Sicherheitskennwort eingeben");
       return;
     }
 
     setImporting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       const userEmail = session?.user?.email;
       if (!userEmail) {
-        toast.error('Nicht angemeldet');
+        toast.error("Nicht angemeldet");
         return;
       }
 
       const response = await fetch(
-        `https://gkmeedrduzzefzwezqlb.supabase.co/functions/v1/employee-data-transfer`,
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/employee-data-transfer`,
         {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            action: 'import',
+            action: "import",
             data: importData,
             password: importPassword,
             user_email: userEmail,
           }),
-        }
+        },
       );
 
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.error || 'Import fehlgeschlagen');
+        throw new Error(result.error || "Import fehlgeschlagen");
       }
 
       setImportResults(result.results);
 
-      const imported = result.results.filter((r: ImportResult) => r.status === 'imported').length;
-      const skipped = result.results.filter((r: ImportResult) => r.status === 'skipped').length;
-      const errors = result.results.filter((r: ImportResult) => r.status === 'error').length;
+      const imported = result.results.filter(
+        (r: ImportResult) => r.status === "imported",
+      ).length;
+      const skipped = result.results.filter(
+        (r: ImportResult) => r.status === "skipped",
+      ).length;
+      const errors = result.results.filter(
+        (r: ImportResult) => r.status === "error",
+      ).length;
 
       if (errors > 0) {
-        toast.error(`Import abgeschlossen: ${imported} importiert, ${skipped} übersprungen, ${errors} Fehler`);
+        toast.error(
+          `Import abgeschlossen: ${imported} importiert, ${skipped} übersprungen, ${errors} Fehler`,
+        );
       } else {
-        toast.success(`Import erfolgreich: ${imported} importiert, ${skipped} übersprungen`);
+        toast.success(
+          `Import erfolgreich: ${imported} importiert, ${skipped} übersprungen`,
+        );
       }
 
-      setImportPassword('');
+      setImportPassword("");
     } catch (error: any) {
-      toast.error(error.message || 'Import fehlgeschlagen');
+      toast.error(error.message || "Import fehlgeschlagen");
     } finally {
       setImporting(false);
     }
@@ -289,7 +338,8 @@ const DataTransferManager = () => {
                 Mitarbeiter auswählen
               </CardTitle>
               <CardDescription>
-                Wählen Sie die Mitarbeiter aus, deren Daten exportiert werden sollen.
+                Wählen Sie die Mitarbeiter aus, deren Daten exportiert werden
+                sollen.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -325,12 +375,16 @@ const DataTransferManager = () => {
                         <TableCell>
                           <Checkbox
                             checked={selectedEmails.has(profile.email)}
-                            onCheckedChange={() => toggleEmployee(profile.email)}
+                            onCheckedChange={() =>
+                              toggleEmployee(profile.email)
+                            }
                           />
                         </TableCell>
-                        <TableCell className="font-medium">{profile.full_name}</TableCell>
+                        <TableCell className="font-medium">
+                          {profile.full_name}
+                        </TableCell>
                         <TableCell>{profile.email}</TableCell>
-                        <TableCell>{profile.employee_number || '–'}</TableCell>
+                        <TableCell>{profile.employee_number || "–"}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -350,7 +404,9 @@ const DataTransferManager = () => {
 
               <Button
                 onClick={handleExport}
-                disabled={exporting || selectedEmails.size === 0 || !exportPassword}
+                disabled={
+                  exporting || selectedEmails.size === 0 || !exportPassword
+                }
                 className="w-full sm:w-auto"
               >
                 {exporting ? (
@@ -378,7 +434,8 @@ const DataTransferManager = () => {
                 JSON-Datei hochladen
               </CardTitle>
               <CardDescription>
-                Laden Sie eine zuvor exportierte JSON-Datei hoch, um die Daten zu importieren.
+                Laden Sie eine zuvor exportierte JSON-Datei hoch, um die Daten
+                zu importieren.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -391,7 +448,9 @@ const DataTransferManager = () => {
                   onChange={handleFileUpload}
                 />
                 {importFileName && (
-                  <p className="text-sm text-muted-foreground">Datei: {importFileName}</p>
+                  <p className="text-sm text-muted-foreground">
+                    Datei: {importFileName}
+                  </p>
                 )}
               </div>
 
@@ -399,7 +458,10 @@ const DataTransferManager = () => {
                 <>
                   <div className="text-sm text-muted-foreground space-y-1">
                     <p>Version: {importData.version}</p>
-                    <p>Exportiert am: {new Date(importData.exported_at).toLocaleString('de-DE')}</p>
+                    <p>
+                      Exportiert am:{" "}
+                      {new Date(importData.exported_at).toLocaleString("de-DE")}
+                    </p>
                     <p>Exportiert von: {importData.exported_by}</p>
                     <p>Quelle: {importData.source_url}</p>
                   </div>
@@ -411,10 +473,18 @@ const DataTransferManager = () => {
                           <TableHead>Status</TableHead>
                           <TableHead>E-Mail</TableHead>
                           <TableHead>Name</TableHead>
-                          <TableHead className="text-right">Zeiteinträge</TableHead>
-                          <TableHead className="text-right">Abwesenheiten</TableHead>
-                          <TableHead className="text-right">Arbeitspläne</TableHead>
-                          <TableHead className="text-right">Korrekturen</TableHead>
+                          <TableHead className="text-right">
+                            Zeiteinträge
+                          </TableHead>
+                          <TableHead className="text-right">
+                            Abwesenheiten
+                          </TableHead>
+                          <TableHead className="text-right">
+                            Arbeitspläne
+                          </TableHead>
+                          <TableHead className="text-right">
+                            Korrekturen
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -423,7 +493,7 @@ const DataTransferManager = () => {
                           return (
                             <TableRow key={idx}>
                               <TableCell>
-                                {status === 'found' ? (
+                                {status === "found" ? (
                                   <Badge variant="default">
                                     <CheckCircle className="h-3 w-3 mr-1" />
                                     Gefunden
@@ -436,11 +506,21 @@ const DataTransferManager = () => {
                                 )}
                               </TableCell>
                               <TableCell>{emp.email}</TableCell>
-                              <TableCell className="font-medium">{emp.profile?.full_name || '–'}</TableCell>
-                              <TableCell className="text-right">{emp.time_entries?.length ?? 0}</TableCell>
-                              <TableCell className="text-right">{emp.absences?.length ?? 0}</TableCell>
-                              <TableCell className="text-right">{emp.work_schedules?.length ?? 0}</TableCell>
-                              <TableCell className="text-right">{emp.balance_corrections?.length ?? 0}</TableCell>
+                              <TableCell className="font-medium">
+                                {emp.profile?.full_name || "–"}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {emp.time_entries?.length ?? 0}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {emp.absences?.length ?? 0}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {emp.work_schedules?.length ?? 0}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {emp.balance_corrections?.length ?? 0}
+                              </TableCell>
                             </TableRow>
                           );
                         })}
@@ -454,9 +534,11 @@ const DataTransferManager = () => {
                       Achtung: Bestehende Daten werden überschrieben!
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      Beim Import werden alle bestehenden Zeiteinträge, Abwesenheiten, Arbeitspläne,
-                      Korrekturbuchungen, Team-Zuordnungen und Rollen der gefundenen Mitarbeiter <strong>gelöscht</strong> und
-                      durch die importierten Daten ersetzt.
+                      Beim Import werden alle bestehenden Zeiteinträge,
+                      Abwesenheiten, Arbeitspläne, Korrekturbuchungen,
+                      Team-Zuordnungen und Rollen der gefundenen Mitarbeiter{" "}
+                      <strong>gelöscht</strong> und durch die importierten Daten
+                      ersetzt.
                     </p>
                   </div>
 
@@ -486,7 +568,8 @@ const DataTransferManager = () => {
                         ) : (
                           <>
                             <Upload className="h-4 w-4 mr-2" />
-                            {importData.employees.length} Mitarbeiter importieren
+                            {importData.employees.length} Mitarbeiter
+                            importieren
                           </>
                         )}
                       </Button>
@@ -495,15 +578,24 @@ const DataTransferManager = () => {
                       <AlertDialogHeader>
                         <AlertDialogTitle>Import bestätigen</AlertDialogTitle>
                         <AlertDialogDescription>
-                          Sind Sie sicher? Bestehende Daten von{' '}
-                          {importData.employees.filter(e => getEmployeeMappingStatus(e.email) === 'found').length}{' '}
-                          Mitarbeiter(n) werden gelöscht und durch die importierten Daten ersetzt.
-                          Dieser Vorgang kann nicht rückgängig gemacht werden.
+                          Sind Sie sicher? Bestehende Daten von{" "}
+                          {
+                            importData.employees.filter(
+                              (e) =>
+                                getEmployeeMappingStatus(e.email) === "found",
+                            ).length
+                          }{" "}
+                          Mitarbeiter(n) werden gelöscht und durch die
+                          importierten Daten ersetzt. Dieser Vorgang kann nicht
+                          rückgängig gemacht werden.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
                         <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleImport} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                        <AlertDialogAction
+                          onClick={handleImport}
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
                           Ja, importieren
                         </AlertDialogAction>
                       </AlertDialogFooter>
@@ -532,25 +624,28 @@ const DataTransferManager = () => {
                           {importResults.map((result, idx) => (
                             <TableRow key={idx}>
                               <TableCell>
-                                {result.status === 'imported' && (
+                                {result.status === "imported" && (
                                   <Badge variant="default">
                                     <CheckCircle className="h-3 w-3 mr-1" />
                                     Importiert
                                   </Badge>
                                 )}
-                                {result.status === 'skipped' && (
+                                {result.status === "skipped" && (
                                   <Badge variant="secondary">
                                     Übersprungen
                                   </Badge>
                                 )}
-                                {result.status === 'error' && (
+                                {result.status === "error" && (
                                   <Badge variant="destructive">
                                     <XCircle className="h-3 w-3 mr-1" />
                                     Fehler
                                   </Badge>
                                 )}
-                                {result.status === 'warning' && (
-                                  <Badge variant="outline" className="border-accent text-accent-foreground">
+                                {result.status === "warning" && (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-accent text-accent-foreground"
+                                  >
                                     <AlertTriangle className="h-3 w-3 mr-1" />
                                     Warnung
                                   </Badge>
@@ -558,10 +653,9 @@ const DataTransferManager = () => {
                               </TableCell>
                               <TableCell>{result.email}</TableCell>
                               <TableCell className="text-sm">
-                                {result.reason || (
-                                  result.counts &&
-                                  `${result.counts.time_entries} Zeiteinträge, ${result.counts.absences} Abwesenheiten, ${result.counts.work_schedules} Arbeitspläne, ${result.counts.balance_corrections} Korrekturen`
-                                )}
+                                {result.reason ||
+                                  (result.counts &&
+                                    `${result.counts.time_entries} Zeiteinträge, ${result.counts.absences} Abwesenheiten, ${result.counts.work_schedules} Arbeitspläne, ${result.counts.balance_corrections} Korrekturen`)}
                               </TableCell>
                             </TableRow>
                           ))}
