@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* masitcon Design System
+   Colors from Design-Manual:
+   - Rot: #C51315 → HSL: 359 88% 42%
+   - Dunkelblau: #102757 → HSL: 218 70% 20%
+   - Hellblau: #4C5893 → HSL: 230 32% 44%
+   - Türkis: #60AFC9 → HSL: 195 50% 58%
+   - Grau: #313639 → HSL: 200 8% 21%
+   - Hellgrau: #EAEAEA → HSL: 0 0% 92%
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 218 70% 20%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 218 70% 20%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 218 70% 20%;
+
+    --primary: 218 70% 20%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 92%;
+    --secondary-foreground: 218 70% 20%;
+
+    --muted: 0 0% 92%;
+    --muted-foreground: 200 8% 40%;
+
+    --accent: 359 88% 42%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 359 88% 42%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 85%;
+    --input: 0 0% 85%;
+    --ring: 218 70% 20%;
+
+    --radius: 0.5rem;
+
+    /* masitcon specific colors */
+    --masitcon-red: 359 88% 42%;
+    --masitcon-darkblue: 218 70% 20%;
+    --masitcon-lightblue: 230 32% 44%;
+    --masitcon-turquoise: 195 50% 58%;
+    --masitcon-gray: 200 8% 21%;
+    --masitcon-lightgray: 0 0% 92%;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 218 70% 20%;
+    --sidebar-primary: 218 70% 20%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 92%;
+    --sidebar-accent-foreground: 218 70% 20%;
+    --sidebar-border: 0 0% 85%;
+    --sidebar-ring: 218 70% 20%;
+  }
+
+  .dark {
+    --background: 218 70% 10%;
+    --foreground: 0 0% 95%;
+
+    --card: 218 70% 12%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 218 70% 12%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 195 50% 58%;
+    --primary-foreground: 218 70% 10%;
+
+    --secondary: 218 50% 25%;
+    --secondary-foreground: 0 0% 95%;
+
+    --muted: 218 50% 25%;
+    --muted-foreground: 0 0% 70%;
+
+    --accent: 359 88% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 359 70% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 218 50% 25%;
+    --input: 218 50% 25%;
+    --ring: 195 50% 58%;
+
+    --sidebar-background: 218 70% 12%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 195 50% 58%;
+    --sidebar-primary-foreground: 218 70% 10%;
+    --sidebar-accent: 218 50% 20%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 218 50% 25%;
+    --sidebar-ring: 195 50% 58%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html, body, #root {
+    @apply overflow-x-hidden max-w-[100vw];
+  }
+
+  body {
+    @apply bg-background text-foreground font-montserrat;
+  }
+}

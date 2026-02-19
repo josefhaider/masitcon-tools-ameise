@@ -1,0 +1,10 @@
+project_id = "gkmeedrduzzefzwezqlb"
+
+[functions.create-employee]
+verify_jwt = false
+
+[functions.admin-update-user]
+verify_jwt = false
+
+[functions.employee-data-transfer]
+verify_jwt = false
