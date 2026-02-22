@@ -796,7 +796,7 @@ collect_config() {
 
     echo ""
     echo "  Protokoll:"
-    echo "    1) HTTPS  (empfohlen – Caddy holt Zertifikat automatisch)"
+    echo "    1) HTTPS  (empfohlen – Zertifikat via Certbot/Let's Encrypt)"
     echo "    2) HTTP   (nur für interne/lokale Server)"
     echo ""
     local default_proto_choice="1"
@@ -806,7 +806,7 @@ collect_config() {
 
     # Abgeleitete URLs (automatisch berechnet – kein manuelles Eingreifen nötig)
     local SITE_URL="${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}"
-    local API_EXTERNAL_URL="${SITE_URL}/supabase"    # Kong via Caddy-Pfadrouting
+    local API_EXTERNAL_URL="${SITE_URL}/supabase"    # Kong via Nginx-Pfadrouting
     local VITE_SUPABASE_URL="${API_EXTERNAL_URL}"    # zur Build-Zeit eingebettet
     local SITE_HOSTNAME="${DEPLOY_DOMAIN}"
 
@@ -934,7 +934,7 @@ collect_config() {
     header "5/6  Ports"
 
     echo "  ${DIM}Ports werden automatisch gesucht. Alle binden an 127.0.0.1 –${NC}"
-    echo "  ${DIM}kein Internetzugriff ohne Caddy.${NC}"
+    echo "  ${DIM}kein Internetzugriff ohne Nginx.${NC}"
     echo ""
     echo "  ${DIM}Studio-Port: nur via SSH-Tunnel erreichbar.${NC}"
     echo ""
@@ -1119,44 +1119,85 @@ wait_for_health() {
     warn "Timeout – Status prüfen: bash scripts/deploy.sh --status --env ${ENV_TARGET}"
 }
 
-generate_caddy_snippet() {
-    local snippet_file="${DIR_CONFIGS}/caddy-snippet.conf"
+generate_nginx_config() {
+    local conf_file="${DIR_CONFIGS}/nginx-${ENV_TARGET}.conf"
+    local log_dir="/var/log/nginx"
     mkdir -p "$DIR_CONFIGS" 2>/dev/null || { sudo mkdir -p "$DIR_CONFIGS"; sudo chown "$(id -u):$(id -g)" "$DIR_CONFIGS"; }
-    cat > "$snippet_file" << CADDY
-# ${PROJECT_DISPLAY} – ${ENV_TARGET}
+
+    # SSL-Block nur bei HTTPS-Protokoll
+    local ssl_block=""
+    if [ "${DEPLOY_PROTOCOL}" = "https" ]; then
+        ssl_block="    listen 443 ssl;
+    listen [::]:443 ssl;
+    ssl_certificate     /etc/letsencrypt/live/${DEPLOY_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DEPLOY_DOMAIN}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;"
+    else
+        ssl_block="    listen 80;
+    listen [::]:80;"
+    fi
+
+    cat > "$conf_file" << NGINX
+# ${PROJECT_DISPLAY} – Nginx-Konfiguration (${ENV_TARGET})
 # ─────────────────────────────────────────────────────────────
-# Einfügen in /etc/caddy/Caddyfile  ODER  als eigene Datei:
-#   sudo cp ${snippet_file} /etc/caddy/conf.d/${PROJECT_NAME}-${ENV_TARGET}.conf
-#   sudo systemctl reload caddy
-#
 # Routing:
-#   DOMAIN              → App (statische Dateien, serve)
-#   DOMAIN/supabase/*   → Kong (Supabase API-Gateway)
-#   DOMAIN/supabase     → Kong
+#   ${DEPLOY_DOMAIN}             → App (Vite SPA, Port ${DEPLOY_APP_PORT})
+#   ${DEPLOY_DOMAIN}/supabase/*  → Supabase Kong (Port ${DEPLOY_API_PORT})
+#
+# Einbinden:
+#   sudo ln -s ${conf_file} /etc/nginx/sites-enabled/${PROJECT_NAME}-${ENV_TARGET}.conf
+#   sudo nginx -t && sudo systemctl reload nginx
 # ─────────────────────────────────────────────────────────────
 
-${DEPLOY_DOMAIN} {
+server {
+${ssl_block}
+    server_name ${DEPLOY_DOMAIN};
 
-    # ── Supabase API (Kong) – Pfad-Routing ──────────────────────
-    # /supabase/* wird an Kong weitergeleitet.
-    # Der Präfix /supabase wird vor der Weiterleitung entfernt.
-    handle_path /supabase/* {
-        reverse_proxy 127.0.0.1:${DEPLOY_API_PORT}
+    access_log ${log_dir}/${PROJECT_NAME}-${ENV_TARGET}-access.log;
+    error_log  ${log_dir}/${PROJECT_NAME}-${ENV_TARGET}-error.log;
+
+    # ── Supabase API (Kong) – /supabase/* → Kong ─────────────
+    # Der /supabase-Präfix wird vor der Weiterleitung entfernt.
+    location /supabase/ {
+        proxy_pass         http://127.0.0.1:${DEPLOY_API_PORT}/;
+        proxy_http_version 1.1;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   Upgrade \$http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
     }
 
-    # ── App (Vite SPA – statische Dateien) ──────────────────────
-    handle {
-        reverse_proxy 127.0.0.1:${DEPLOY_APP_PORT}
-    }
-
-    # ── Logs ────────────────────────────────────────────────────
-    log {
-        output file /var/log/${PROJECT_NAME}/caddy-${ENV_TARGET}.log
-        format json
+    # ── App (Vite SPA – statische Dateien via serve) ─────────
+    location / {
+        proxy_pass         http://127.0.0.1:${DEPLOY_APP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
     }
 }
-CADDY
-    log "Caddy-Snippet: ${snippet_file}"
+NGINX
+
+    # HTTP→HTTPS Redirect-Block nur bei HTTPS
+    if [ "${DEPLOY_PROTOCOL}" = "https" ]; then
+        cat >> "$conf_file" << REDIRECT
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DEPLOY_DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+REDIRECT
+    fi
+
+    log "Nginx-Konfiguration: ${conf_file}"
 }
 
 # ─── Server-Setup (Ersteinrichtung) ─────────────────────────────
@@ -1180,8 +1221,8 @@ setup_server() {
     done
     log "Verzeichnisse erstellt: ${DIR_BASE}/"
 
-    # Log-Verzeichnis für Caddy
-    sudo mkdir -p "/var/log/${PROJECT_NAME}" 2>/dev/null || mkdir -p "${DIR_LOGS}"
+    # Log-Verzeichnis (Nginx nutzt /var/log/nginx – kein eigenes Verzeichnis nötig)
+    sudo mkdir -p "/var/log/nginx" 2>/dev/null || true
 
     # Repo: Bereits geklontes Repo nutzen oder neu klonen
     local SCRIPT_DIR; SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1211,8 +1252,8 @@ setup_server() {
     # Env-Datei schreiben (enthält alle Secrets)
     write_env_file
 
-    # Caddy-Snippet generieren (vor Container-Start)
-    generate_caddy_snippet
+    # Nginx-Konfiguration generieren (vor Container-Start)
+    generate_nginx_config
 
     # Container bauen und starten
     local DC; DC=$(detect_compose)
@@ -1241,9 +1282,9 @@ setup_server() {
     echo -e "  ${BOLD}Studio:${NC}    127.0.0.1:${DEPLOY_STUDIO_PORT}  (SSH-Tunnel nötig)"
     echo ""
     echo -e "  ${BOLD}Nächste Schritte:${NC}"
-    echo "    1. Caddy-Snippet einbinden:"
-    echo "       sudo cp ${DIR_CONFIGS}/caddy-snippet.conf /etc/caddy/conf.d/${PROJECT_NAME}-${ENV_TARGET}.conf"
-    echo "       sudo systemctl reload caddy"
+    echo "    1. Nginx-Konfiguration einbinden:"
+    echo "       sudo ln -s ${DIR_CONFIGS}/nginx-${ENV_TARGET}.conf /etc/nginx/sites-enabled/${PROJECT_NAME}-${ENV_TARGET}.conf"
+    echo "       sudo nginx -t && sudo systemctl reload nginx"
     echo ""
     echo "    2. Studio via SSH-Tunnel:"
     echo "       ssh -L ${DEPLOY_STUDIO_PORT}:127.0.0.1:${DEPLOY_STUDIO_PORT} user@server"
