@@ -134,9 +134,10 @@ while [[ $# -gt 0 ]]; do
         --clean)   MODE="clean";   shift ;;
         --full)    CLEAN_FULL=true; shift ;;
         --prune)   MODE="prune";   shift ;;
-        --migrate)     MODE="migrate"; shift ;;
-        --backup)      MODE="backup";  shift ;;
-        --check-ports) MODE="check-ports"; shift ;;
+        --migrate)      MODE="migrate";      shift ;;
+        --backup)       MODE="backup";       shift ;;
+        --check-ports)  MODE="check-ports";  shift ;;
+        --reconfigure)  MODE="reconfigure";  shift ;;
         --env)      ENV_TARGET="${2:-production}"; ENV_EXPLICIT=true; shift 2 ;;
         --base-dir) CLI_BASE_DIR="${2:-}"; shift 2 ;;
         --service)  SHOW_LOGS_SERVICE="${2:-}"; shift 2 ;;
@@ -158,6 +159,7 @@ Modi:
   --clean --full     Alles entfernen inkl. Verzeichnisse, Backups, Logs
   --prune            Docker-System aufräumen (ungenutzte Images/Volumes)
   --check-ports      Ports prüfen (Supabase) – zeigt Belegung, bietet Alternativen
+  --reconfigure      Bestehende Einstellungen laden, ändern und neu deployen
 
 Optionen:
   --env production|staging    Ziel-Umgebung (Default: production)
@@ -1626,6 +1628,86 @@ do_backup() {
         || err "Backup fehlgeschlagen (supabase start ausgeführt?)"
 }
 
+do_reconfigure() {
+    header "Rekonfiguration – ${PROJECT_DISPLAY} (${ENV_TARGET})"
+
+    load_or_init_dirs
+
+    local sf; sf=$(get_secrets_file)
+    if [ -z "$sf" ]; then
+        err "Keine bestehende Konfiguration gefunden unter ${DIR_BASE}"
+        info "Zuerst einrichten: bash scripts/deploy.sh --env ${ENV_TARGET}"
+        exit 1
+    fi
+
+    # Bestehende Secrets laden damit collect_config() die Werte vorausfüllt
+    # shellcheck source=/dev/null
+    source "$sf"
+
+    info "Bestehende Konfiguration geladen – Enter behält jeweiligen Wert."
+    echo ""
+
+    # Wizard durchlaufen (alle Felder vorausgefüllt)
+    collect_config
+    show_summary
+
+    local DC; DC=$(detect_compose)
+    local COMPOSE_FILE="${DIR_APP}/docker/docker-compose.yml"
+    local SECRETS_FILE="${DIR_BASE}/secrets.env"
+    [ -z "$DC" ] && { err "Docker Compose nicht gefunden"; exit 1; }
+    [ ! -f "$COMPOSE_FILE" ] && { err "docker/docker-compose.yml nicht gefunden"; exit 1; }
+
+    # Neue secrets.env und Nginx-Konfiguration schreiben
+    write_env_file
+    generate_nginx_config
+
+    echo ""
+    echo -e "  ${BOLD}Was soll neu gestartet werden?${NC}"
+    echo "    1) Nur Konfiguration neu laden (docker compose up -d, kein Rebuild)"
+    echo "    2) App-Container neu bauen + starten  (nötig bei Domain/URL-Änderung)"
+    echo "    3) Alle Container neu bauen + starten (nötig bei grundlegenden Änderungen)"
+    echo ""
+    local restart_choice; restart_choice=$(ask "Auswahl" "1")
+
+    case "$restart_choice" in
+        2)
+            info "Baue App-Container neu..."
+            $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build app \
+                || { err "docker compose up fehlgeschlagen"; exit 1; }
+            $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d
+            ;;
+        3)
+            info "Baue alle Container neu..."
+            $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build \
+                || { err "docker compose up fehlgeschlagen"; exit 1; }
+            ;;
+        *)
+            info "Starte Container mit neuer Konfiguration..."
+            $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d \
+                || { err "docker compose up fehlgeschlagen"; exit 1; }
+            ;;
+    esac
+
+    wait_for_health "$DC" "$COMPOSE_FILE" "$SECRETS_FILE"
+    date '+%Y-%m-%d %H:%M:%S' > "${DIR_BASE}/.last-deploy"
+
+    echo ""
+    echo -e "${BOLD}${GREEN}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${GREEN}║   Rekonfiguration abgeschlossen!                     ║${NC}"
+    echo -e "${BOLD}${GREEN}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  ${BOLD}App:${NC}       ${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}"
+    echo -e "  ${BOLD}API:${NC}       ${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}/supabase"
+    echo ""
+    if [ "$restart_choice" != "1" ]; then
+        echo "  Nginx-Konfiguration ggf. neu laden:"
+        echo "    sudo nginx -t && sudo systemctl reload nginx"
+        echo ""
+    fi
+    echo -e "  ${DIM}Secrets: ${DIR_BASE}/secrets.env${NC}"
+    echo ""
+}
+
 # ═══════════════════════════════════════════════════════════════
 # ─── MAIN
 # ═══════════════════════════════════════════════════════════════
@@ -1645,7 +1727,7 @@ main() {
 
     # Umgebung abfragen, wenn für diesen Modus nötig und nicht per --env gesetzt
     case "$MODE" in
-        update|status|logs|stop|restart|clean|backup)
+        update|status|logs|stop|restart|clean|backup|reconfigure)
             ask_env_target
             echo -e "  ${DIM}Umgebung: ${ENV_TARGET}${NC}"
             echo ""
@@ -1661,10 +1743,11 @@ main() {
         restart) do_restart  ;;
         clean)   do_clean    ;;
         prune)   do_prune    ;;
-        migrate)     do_migrate     ;;
-        backup)      do_backup      ;;
-        check-ports) do_check_ports ;;
-        setup)       setup_server ;;
+        migrate)      do_migrate      ;;
+        backup)       do_backup       ;;
+        check-ports)  do_check_ports  ;;
+        reconfigure)  do_reconfigure  ;;
+        setup)        setup_server    ;;
     esac
 }
 
