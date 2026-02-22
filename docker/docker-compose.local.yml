@@ -1,0 +1,298 @@
+# ===================================================================
+# masitcon Zeiterfassung (Ameise) – Docker Compose (Lokale Entwicklung)
+# ===================================================================
+# Nur Supabase-Backend – App läuft via `npm run dev` (HMR).
+# Kein App-Container: schnellere Entwicklung durch Hot Module Reload.
+#
+# Start:   bash scripts/deploy.sh --local
+# Manuell: docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local up -d
+# Stoppen: docker compose -f docker/docker-compose.local.yml down
+# Reset:   docker compose -f docker/docker-compose.local.yml down -v (Daten löschen!)
+# Logs:    docker compose -f docker/docker-compose.local.yml logs -f
+#
+# Ports (alle 0.0.0.0 – Mac Docker Desktop):
+#   API (Kong):  8100  → http://localhost:8100
+#   PostgreSQL:  5433  → localhost:5433
+#   Studio:      3101  → http://localhost:3101
+#   Inbucket:    9000  → http://localhost:9000 (E-Mail-Catch)
+#   SMTP intern: 2500  → inbucket Container (nur intern)
+#
+# Migrationen werden beim ersten Start automatisch angewendet.
+# Für Reset nach Migration-Änderungen: docker compose down -v && up -d
+# ===================================================================
+
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────
+  # Supabase-Postgres mit pgcrypto, pgjwt, etc.
+  # Init-Scripts laufen NUR beim ersten Start (leeres Volume).
+  # Migrationen aus supabase/migrations/ werden via init-migrations.sh angewendet.
+  db:
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-db
+    image: supabase/postgres:15.8.1.085
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:${DB_PORT:-5433}:5432"
+    volumes:
+      - ./volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+      - ./volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      - ./volumes/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:ro
+      - ./volumes/db/init-migrations.sh:/docker-entrypoint-initdb.d/migrations/99-app-migrations.sh:ro
+      - ../supabase/migrations:/app-migrations:ro
+      - db-data:/var/lib/postgresql/data
+      - db-config:/etc/postgresql-custom
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: "5432"
+      POSTGRES_PORT: "5432"
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: ${JWT_EXPIRY:-3600}
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - log_min_messages=fatal
+
+  # ── Kong API Gateway ──────────────────────────────────────────────
+  # Einziger extern erreichbarer Supabase-Service.
+  # npm run dev kommuniziert über http://localhost:API_PORT mit Kong.
+  kong:
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-kong
+    image: kong:2.8.1
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:${API_PORT:-8100}:8000"
+    volumes:
+      - ./volumes/api/kong.yml:/home/kong/temp.yml:ro
+      - ./volumes/api/kong-init.sh:/kong-init.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+    entrypoint: ["/bin/sh", "/kong-init.sh"]
+
+  # ── PostgREST ─────────────────────────────────────────────────────
+  # REST API für PostgreSQL. Nur via Kong erreichbar.
+  rest:
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-rest
+    image: postgrest/postgrest:v14.5
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS:-public,storage}
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-3600}
+    command: ["postgrest"]
+
+  # ── GoTrue Auth ───────────────────────────────────────────────────
+  # Authentifizierung (Login, Register, JWT, Passwort-Reset-Mails).
+  # SMTP → Inbucket Container (fängt alle E-Mails lokal ab).
+  # extra_hosts: host.docker.internal:host-gateway → Auth-Callbacks zur lokalen App.
+  auth:
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-auth
+    image: supabase/gotrue:v2.186.0
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL:-http://localhost:8100}
+
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+
+      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:8080}
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-}
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: ${ENABLE_EMAIL_SIGNUP:-true}
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: ${ENABLE_ANONYMOUS_USERS:-false}
+      GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM:-false}
+
+      # SMTP → Inbucket (kein echter Mail-Versand in lokaler Umgebung)
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-admin@ameise.local}
+      GOTRUE_SMTP_HOST: inbucket
+      GOTRUE_SMTP_PORT: 2500
+      GOTRUE_SMTP_USER: ${SMTP_USER:-fake}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-fake}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-Ameise Local}
+
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/confirm
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/confirm
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/confirm
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/confirm
+
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+
+  # ── Storage API ───────────────────────────────────────────────────
+  # Datei-Storage. Nur via Kong erreichbar.
+  storage:
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-storage
+    image: supabase/storage-api:v1.37.8
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      GLOBAL_S3_BUCKET: stub
+      TENANT_ID: stub
+      REGION: stub
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      S3_PROTOCOL_ACCESS_KEY_ID: ${S3_PROTOCOL_ACCESS_KEY_ID:-placeholder}
+      S3_PROTOCOL_ACCESS_KEY_SECRET: ${S3_PROTOCOL_ACCESS_KEY_SECRET:-placeholder}
+    volumes:
+      - storage-data:/var/lib/storage
+
+  # ── Postgres Meta ─────────────────────────────────────────────────
+  # REST-API für DB-Schema-Inspektion (wird von Studio benötigt).
+  meta:
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-meta
+    image: supabase/postgres-meta:v0.95.2
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: ${POSTGRES_DB:-postgres}
+      PG_META_DB_USER: supabase_admin
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+
+  # ── Supabase Studio ───────────────────────────────────────────────
+  # Web-UI für DB-Verwaltung. Lokal direkt im Browser erreichbar.
+  # http://localhost:STUDIO_PORT (kein SSH-Tunnel nötig)
+  studio:
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-studio
+    image: supabase/studio:2026.02.16-sha-26c615c
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:${STUDIO_PORT:-3101}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/platform/profile').then((r) => {if (r.status !== 200) throw new Error(r.status)})"]
+      timeout: 10s
+      interval: 5s
+      retries: 3
+    depends_on:
+      meta:
+        condition: service_started
+      kong:
+        condition: service_started
+    environment:
+      HOSTNAME: "::"
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+      DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION:-Masitcon Local}
+      DEFAULT_PROJECT_NAME: ${STUDIO_DEFAULT_PROJECT:-Ameise Local}
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_PUBLIC_URL: ${API_EXTERNAL_URL:-http://localhost:8100}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      NEXT_PUBLIC_ENABLE_LOGS: "false"
+      NEXT_ANALYTICS_BACKEND_PROVIDER: postgres
+
+  # ── Hono API (Edge-Functions-Ersatz) ─────────────────────────────
+  # Ersetzt Supabase Edge Functions (Deno) durch einen Node.js/Hono-Container.
+  # Erreichbar intern via Kong: http://localhost:API_PORT/functions/v1/*
+  # Kein externer Port – nur über Kong (Port 8000 intern).
+  api:
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-api
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      kong:
+        condition: service_started
+    environment:
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      DATA_TRANSFER_PASSWORD: ${DATA_TRANSFER_PASSWORD:-local-dev-password}
+      ALLOWED_ORIGIN: ${SITE_URL:-http://localhost:8080}
+
+  # ── Inbucket (E-Mail-Catch lokal) ────────────────────────────────
+  # Fängt alle ausgehenden E-Mails (GoTrue Auth-Mails) lokal ab.
+  # Web-UI:  http://localhost:9000   (E-Mails lesen)
+  # SMTP:    inbucket:2500           (nur intern von GoTrue genutzt)
+  inbucket:
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-inbucket
+    image: inbucket/inbucket:latest
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:${INBUCKET_WEB_PORT:-9000}:9000"
+      - "0.0.0.0:${INBUCKET_SMTP_PORT:-2500}:2500"
+    environment:
+      INBUCKET_LOGLEVEL: warn
+      INBUCKET_SMTP_ADDR: "0.0.0.0:2500"
+      INBUCKET_HTTP_ADDR: "0.0.0.0:9000"
+
+volumes:
+  db-data:
+    name: ${COMPOSE_PROJECT_NAME:-ameise-local}-db-data
+  db-config:
+    name: ${COMPOSE_PROJECT_NAME:-ameise-local}-db-config
+  storage-data:
+    name: ${COMPOSE_PROJECT_NAME:-ameise-local}-storage-data

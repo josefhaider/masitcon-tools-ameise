@@ -1,0 +1,292 @@
+# ===================================================================
+# masitcon Zeiterfassung (Ameise) – Docker Compose (Gesamter Stack)
+# ===================================================================
+# App + Supabase-Backend in einem Stack.
+# Isolation via COMPOSE_PROJECT_NAME (z.B. ameise-production).
+#
+# Start:   COMPOSE_PROJECT_NAME=ameise-production docker compose -f docker/docker-compose.yml up -d
+# Stoppen: docker compose -f docker/docker-compose.yml down
+# Logs:    docker compose -f docker/docker-compose.yml logs -f app
+# Rebuild: docker compose -f docker/docker-compose.yml up -d --build app
+#
+# Alle Ports binden an 127.0.0.1 – kein direkter Internetzugriff.
+# Caddy routet: DOMAIN → App (APP_PORT), DOMAIN/supabase/* → Kong (API_PORT)
+# ===================================================================
+
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────
+  # Supabase-Postgres mit vorinstallierten Extensions (pgcrypto, pgjwt, etc.)
+  # Init-Scripts laufen NUR beim ersten Start (leeres Volume).
+  db:
+    container_name: ${COMPOSE_PROJECT_NAME}-db
+    image: supabase/postgres:15.8.1.085
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - ./volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+      - ./volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      - ./volumes/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:ro
+      - ./volumes/db/init-migrations.sh:/docker-entrypoint-initdb.d/migrations/99-app-migrations.sh:ro
+      - ../supabase/migrations:/app-migrations:ro
+      - db-data:/var/lib/postgresql/data
+      - db-config:/etc/postgresql-custom
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: "5432"
+      POSTGRES_PORT: "5432"
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXP: ${JWT_EXPIRY:-3600}
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - log_min_messages=fatal
+
+  # ── Kong API Gateway ──────────────────────────────────────────────
+  # Einziger Supabase-Service mit externem Port (127.0.0.1-only).
+  # Caddy routet /supabase/* → Kong (nach Strip des /supabase-Präfixes).
+  kong:
+    container_name: ${COMPOSE_PROJECT_NAME}-kong
+    image: kong:2.8.1
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      - ./volumes/api/kong.yml:/home/kong/temp.yml:ro
+      - ./volumes/api/kong-init.sh:/kong-init.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+    entrypoint: ["/bin/sh", "/kong-init.sh"]
+
+  # ── PostgREST ─────────────────────────────────────────────────────
+  # REST API für PostgreSQL. Kein externer Port (nur via Kong).
+  rest:
+    container_name: ${COMPOSE_PROJECT_NAME}-rest
+    image: postgrest/postgrest:v14.5
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS:-public,storage}
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-3600}
+    command: ["postgrest"]
+
+  # ── GoTrue Auth ───────────────────────────────────────────────────
+  # Authentifizierung (Login, Register, JWT, Passwort-Reset-Mails).
+  # extra_hosts: SITE_HOSTNAME → host-gateway damit GoTrue E-Mail-Links
+  # aus dem Container heraus auflösen kann.
+  auth:
+    container_name: ${COMPOSE_PROJECT_NAME}-auth
+    image: supabase/gotrue:v2.186.0
+    restart: unless-stopped
+    extra_hosts:
+      - "${SITE_HOSTNAME:-localhost}:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL}
+
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+
+      GOTRUE_SITE_URL: ${SITE_URL}
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-}
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: ${ENABLE_EMAIL_SIGNUP:-true}
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: ${ENABLE_ANONYMOUS_USERS:-false}
+      GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM:-false}
+
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-465}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-Ameise}
+
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/confirm
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/confirm
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/confirm
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/confirm
+
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+
+  # ── Storage API ───────────────────────────────────────────────────
+  # Datei-Storage. Kein externer Port (nur via Kong).
+  storage:
+    container_name: ${COMPOSE_PROJECT_NAME}-storage
+    image: supabase/storage-api:v1.37.8
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      GLOBAL_S3_BUCKET: stub
+      TENANT_ID: stub
+      REGION: stub
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      S3_PROTOCOL_ACCESS_KEY_ID: ${S3_PROTOCOL_ACCESS_KEY_ID:-placeholder}
+      S3_PROTOCOL_ACCESS_KEY_SECRET: ${S3_PROTOCOL_ACCESS_KEY_SECRET:-placeholder}
+    volumes:
+      - storage-data:/var/lib/storage
+
+  # ── Postgres Meta ─────────────────────────────────────────────────
+  # REST-API für DB-Schema-Inspektion (wird von Studio benötigt).
+  # Kein externer Port.
+  meta:
+    container_name: ${COMPOSE_PROJECT_NAME}-meta
+    image: supabase/postgres-meta:v0.95.2
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: ${POSTGRES_DB:-postgres}
+      PG_META_DB_USER: supabase_admin
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+
+  # ── Supabase Studio ──────────────────────────────────────────────
+  # Web-UI für DB-Verwaltung. Nur auf 127.0.0.1 (Zugang via SSH-Tunnel).
+  # ssh -L 3100:127.0.0.1:STUDIO_PORT user@server → Browser: http://localhost:3100
+  studio:
+    container_name: ${COMPOSE_PROJECT_NAME}-studio
+    image: supabase/studio:2026.02.16-sha-26c615c
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${STUDIO_PORT:-3100}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/platform/profile').then((r) => {if (r.status !== 200) throw new Error(r.status)})"]
+      timeout: 10s
+      interval: 5s
+      retries: 3
+    depends_on:
+      meta:
+        condition: service_started
+      kong:
+        condition: service_started
+    environment:
+      HOSTNAME: "::"
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+      DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION:-Masitcon}
+      DEFAULT_PROJECT_NAME: ${STUDIO_DEFAULT_PROJECT:-Ameise}
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_PUBLIC_URL: ${API_EXTERNAL_URL}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      NEXT_PUBLIC_ENABLE_LOGS: "false"
+      NEXT_ANALYTICS_BACKEND_PROVIDER: postgres
+
+  # ── Hono API (Edge-Functions-Ersatz) ─────────────────────────────
+  # Kein externer Port – nur über Kong erreichbar: DOMAIN/functions/v1/*
+  api:
+    container_name: ${COMPOSE_PROJECT_NAME}-api
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      kong:
+        condition: service_started
+    environment:
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      DATA_TRANSFER_PASSWORD: ${DATA_TRANSFER_PASSWORD}
+      ALLOWED_ORIGIN: ${SITE_URL}
+
+  # ── Vite App (SPA, statische Dateien via serve) ──────────────────
+  # WICHTIG: VITE_SUPABASE_URL wird zur BUILD-ZEIT eingebettet.
+  # Caddy routet: DOMAIN → 127.0.0.1:APP_PORT
+  # network_mode: host → direkter Zugriff auf 127.0.0.1:API_PORT (Kong)
+  app:
+    container_name: ${COMPOSE_PROJECT_NAME}-app
+    build:
+      context: ..
+      dockerfile: scripts/Dockerfile
+      args:
+        BUILD_MODE: ${BUILD_MODE:-production}
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${ANON_KEY}
+    network_mode: host
+    environment:
+      PORT: ${APP_PORT:-8080}
+    restart: unless-stopped
+    depends_on:
+      kong:
+        condition: service_started
+
+volumes:
+  db-data:
+    name: ${COMPOSE_PROJECT_NAME}-db-data
+  db-config:
+    name: ${COMPOSE_PROJECT_NAME}-db-config
+  storage-data:
+    name: ${COMPOSE_PROJECT_NAME}-storage-data
