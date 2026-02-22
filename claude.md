@@ -359,59 +359,48 @@ Redis, PostgreSQL, interne Services → niemals öffnen.
 
 ---
 
-## Lokale Entwicklungsumgebung (Supabase Local)
+## Lokale Entwicklungsumgebung (Docker Compose)
 
-### Port-Konfiguration (WICHTIG!)
+Kein Supabase CLI mehr – der gesamte Stack läuft via Docker Compose.
 
-Dieses Projekt verwendet **eigene Ports** in `supabase/config.toml`, damit es nicht mit anderen lokalen Supabase-Projekten kollidiert:
+### Ports
 
-| Service    | Port  |
-| ---------- | ----- |
-| API (Kong) | 54331 |
-| PostgreSQL | 54332 |
-| Studio     | 54333 |
-| Mailpit    | 54334 |
-| Analytics  | 54337 |
+| Service           | Port  | URL                              |
+|-------------------|-------|----------------------------------|
+| App (npm run dev) | 8080  | http://localhost:8080            |
+| API / Kong        | 8100  | http://localhost:8100            |
+| Hono API          | –     | http://localhost:8100/functions/v1 |
+| Studio            | 3101  | http://localhost:3101            |
+| Inbucket          | 9000  | http://localhost:9000            |
+| PostgreSQL        | 5433  | localhost:5433                   |
 
-**PFLICHT vor jedem `supabase start`:** Ports prüfen! Auf dem Server laufen mehrere Docker/Supabase-Instanzen.
+Der Hono-API-Container hat keinen eigenen externen Port – er ist nur intern via Kong erreichbar.
 
-```bash
-# Port-Check ausführen (zeigt Belegung, bietet freie Alternativen)
-bash scripts/deploy.sh --check-ports
-```
-
-Das Deploy-Script prüft automatisch vor `--local`, `--migrate` und bei `--check-ports`. Bei Konflikten werden belegte Ports mit Prozess/Container angezeigt; optional kann `supabase/config.toml` mit freien Alternativ-Ports aktualisiert werden.
-
-Manuell: `docker ps` und `lsof -iTCP -sTCP:LISTEN -nP | grep 543`
-
-### Lokale URLs und Keys
-
-Nach `supabase start` die aktuellen Credentials mit `supabase status` auslesen und in `.env` eintragen:
-
-```
-VITE_SUPABASE_URL=http://127.0.0.1:54331
-VITE_SUPABASE_ANON_KEY=<aus supabase status>
-```
-
-Edge Functions brauchen eine eigene `supabase/.env`:
-
-```
-SUPABASE_URL=http://127.0.0.1:54331
-SUPABASE_SERVICE_ROLE_KEY=<aus supabase status>
-DATA_TRANSFER_PASSWORD=<beliebig>
-```
-
-### Lokale Supabase starten/stoppen
+### Stack starten/stoppen
 
 ```bash
-supabase start          # Startet alle Container + wendet Migrations an
-supabase functions serve # Edge Functions lokal bereitstellen
-supabase stop           # Stoppt alle Container
-supabase db reset       # DB zuruecksetzen und alle Migrations neu anwenden
+# Starten (inkl. Migrationen und Hono-API-Container)
+bash scripts/deploy.sh --local
+
+# Stack stoppen (Daten bleiben erhalten)
+docker compose -f docker/docker-compose.local.yml down
+
+# Stack komplett zurücksetzen (alle Daten löschen)
+docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local down -v
+docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local up -d
+
+# Logs ansehen
+docker compose -f docker/docker-compose.local.yml logs -f
+docker compose -f docker/docker-compose.local.yml logs -f api
 ```
+
+### Secrets und Konfiguration
+
+`docker/.env.local` wird von `deploy.sh --local` automatisch generiert.
+Enthält alle Schlüssel: JWT_SECRET, ANON_KEY, SERVICE_ROLE_KEY, DATA_TRANSFER_PASSWORD.
 
 ### Projekt-Info
 
-- **Supabase Project-ID:** `masitcon-tools-ameise-db`
-- **Docker-Container-Prefix:** `supabase_*_masitcon-tools-ameise-db`
-- **Keine Cloud-Anbindung** -- alles laeuft lokal
+- **COMPOSE_PROJECT_NAME:** `ameise-local`
+- **Container-Prefix:** `ameise-local-{db,kong,rest,auth,storage,meta,studio,inbucket,api}`
+- **Keine Cloud-Anbindung** – alles läuft lokal

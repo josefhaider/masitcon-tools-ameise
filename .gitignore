@@ -1,3 +1,4 @@
+.DS_Store
 node_modules
 .env
 .env.local
@@ -8,6 +9,12 @@ dist
 supabase/.temp/
 supabase/.branches/
 supabase/.env
+supabase/config.toml
+supabase/config.toml.bak
+supabase/backups/
+supabase/snippets/
 .claude_reference/
 import_vinzenz_krautz_2025.sql
-supabase/backups/
+docker/.env.local
+migration-dumps/
+bun.lockb

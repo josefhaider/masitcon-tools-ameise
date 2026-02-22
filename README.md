@@ -7,113 +7,111 @@ Professionelle Arbeitszeiterfassungs-Suite fuer masitcon.
 ## Tech Stack
 
 - **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui
-- **Backend**: Supabase (Auth, PostgreSQL, Edge Functions, RLS)
+- **Backend**: Supabase (selbst gehostet via Docker Compose) – Auth, PostgreSQL, Storage
+- **API**: Hono.js (Node.js) – ersetzt Supabase Edge Functions
 - **Charts**: Recharts
 - **PDF**: jsPDF + AutoTable
 
-## Repo-Zugriff (Git + SSH-Key)
-
-Vor dem Klonen: SSH-Key einrichten.
-
-### Lokale Entwicklung (persoenlicher Key)
-
-1. **SSH-Key erzeugen** (falls noch keiner existiert):
-   ```bash
-   ssh-keygen -t ed25519 -C "dein@email.de" -f ~/.ssh/id_ed25519
-   ```
-
-2. **Public Key in GitHub hinterlegen:**
-   - GitHub → Einstellungen → SSH and GPG keys → New SSH key
-   - Inhalt von `~/.ssh/id_ed25519.pub` einfuegen
-
-### Server-Deployment (Deploy-Key, read-only)
-
-1. **Auf dem Server:** `server-init.sh` bietet an, einen Deploy-Key zu generieren.
-
-2. **Oder manuell:**
-   ```bash
-   ssh-keygen -t ed25519 -C "deploy@server" -f ~/.ssh/id_ed25519_deploy -N ""
-   cat ~/.ssh/id_ed25519_deploy.pub
-   ```
-
-3. **Deploy Key in GitHub hinterlegen:**
-   - Repo → Settings → Deploy keys → Add deploy key
-   - Public Key einfuegen, Titel z.B. „Server Ameise"
-   - **Write access nicht aktivieren** (read-only reicht)
-
-4. **SSH-Config** (falls mehrere Keys):
-   ```
-   Host github.com
-       HostName github.com
-       User git
-       IdentityFile ~/.ssh/id_ed25519_deploy
-       IdentitiesOnly yes
-   ```
-
-5. **Verbindung testen:**
-   ```bash
-   ssh -T git@github.com
-   # Erwartet: "Hi josefhaider/...! You've successfully authenticated..."
-   ```
-
-## Einstieg
+## Schnellstart Lokal
 
 ```bash
 git clone git@github.com:josefhaider/masitcon-tools-ameise.git
 cd masitcon-tools-ameise
+bash scripts/deploy.sh --local
 ```
 
-Damit hast du alles – inkl. `scripts/deploy.sh` und `scripts/server-init.sh`.
+Die App laeuft auf http://localhost:8080. Der Hono-API-Container ist via Kong erreichbar unter http://localhost:8100/functions/v1.
 
-## Voraussetzungen
+## Architektur
 
-- Node.js >= 18
-- Docker (fuer lokale Supabase-Instanz)
-- Supabase CLI
+### Lokal (Mac)
+```
+npm run dev  (Port 8080, HMR)
+  ↓ VITE_SUPABASE_URL = http://localhost:8100
+
+localhost:8100 → Kong → { auth, rest, storage, /functions/v1/* → api:3200 }
+localhost:3101 → Supabase Studio
+localhost:9000 → Inbucket (E-Mail-Catch)
+localhost:5433 → PostgreSQL direkt
+```
+
+### Server (Production/Staging)
+```
+DOMAIN       → Caddy → App-Container (Port 8080)
+DOMAIN/supabase/* → Caddy → Kong → { auth, rest, storage, /functions/v1/* → api:3200 }
+```
+
+## Repo-Zugriff (Git + SSH-Key)
+
+### Lokale Entwicklung
+
+1. SSH-Key erzeugen (falls noch keiner existiert):
+   ```bash
+   ssh-keygen -t ed25519 -C "dein@email.de" -f ~/.ssh/id_ed25519
+   ```
+2. Public Key in GitHub hinterlegen: Einstellungen → SSH and GPG keys → New SSH key
+
+### Server-Deployment (Deploy-Key, read-only)
+
+1. `server-init.sh` generiert und registriert einen Deploy-Key automatisch.
+2. Oder manuell:
+   ```bash
+   ssh-keygen -t ed25519 -C "deploy@server" -f ~/.ssh/id_ed25519_deploy -N ""
+   cat ~/.ssh/id_ed25519_deploy.pub  # in GitHub Repo → Settings → Deploy keys eintragen
+   ```
 
 ## Lokale Entwicklung
 
-Nach dem Klonen:
+### Start
 
 ```bash
 bash scripts/deploy.sh --local
 ```
 
-Die App laeuft auf http://localhost:8080.
+Beim ersten Start:
+- Generiert kryptografische Schluessel in `docker/.env.local`
+- Startet den kompletten Supabase-Stack + Hono-API-Container via Docker Compose
+- Wendet alle Migrationen aus `supabase/migrations/` automatisch an
+- Schreibt `.env` fuer Vite (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)
+- Startet `npm run dev`
 
-**WICHTIG:** Vor `supabase start` Ports pruefen: `bash scripts/deploy.sh --check-ports` (oder `ss -tlnp | grep 543` auf Ubuntu)
+### Lokale URLs
 
-## Scripts
+| Service           | URL                              |
+|-------------------|----------------------------------|
+| App               | http://localhost:8080            |
+| Supabase API      | http://localhost:8100            |
+| Hono API          | http://localhost:8100/functions/v1 |
+| Studio            | http://localhost:3101            |
+| Inbucket (E-Mail) | http://localhost:9000            |
+| PostgreSQL        | localhost:5433                   |
 
-| Script               | Beschreibung                          |
-|----------------------|---------------------------------------|
-| `npm run dev`        | Dev-Server starten                    |
-| `npm run build`      | Produktions-Build (default)            |
-| `npm run build:production` | Produktions-Build (.env.production)   |
-| `npm run build:staging`    | Staging-Build (.env.staging)          |
-| `npm run lint` | ESLint ausfuehren                     |
-| `npm run format`| Prettier auf src/ ausfuehren         |
-| `npm run preview`| Build-Preview                       |
+### Stack-Verwaltung
 
-## Supabase
+```bash
+# Stack stoppen
+docker compose -f docker/docker-compose.local.yml down
 
-Lokale Supabase-Instanz mit Custom-Ports (siehe `supabase/config.toml`):
+# Daten komplett loeschen und neu starten (alle Migrationen neu anwenden)
+docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local down -v
+docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local up -d
 
-| Service   | Port  |
-|-----------|-------|
-| API       | 54331 |
-| DB        | 54332 |
-| Studio    | 54333 |
-| Inbucket  | 54334 |
-| Analytics | 54337 |
+# Logs ansehen
+docker compose -f docker/docker-compose.local.yml logs -f
+docker compose -f docker/docker-compose.local.yml logs -f api
+```
 
-Edge Functions werden mit `supabase functions serve --env-file supabase/.env` gestartet.
+### Datenmigration von Supabase Cloud
+
+```bash
+bash scripts/migrate-from-cloud.sh
+```
 
 ## Deploy & Server
 
 ### Uebersicht
 
-| Script | Beschreibung |
+| Befehl | Beschreibung |
 |--------|--------------|
 | `bash scripts/deploy.sh --local` | Lokale Dev-Env einrichten und starten |
 | `bash scripts/deploy.sh` | Interaktives Server-Setup (Ersteinrichtung) |
@@ -126,59 +124,69 @@ Edge Functions werden mit `supabase functions serve --env-file supabase/.env` ge
 | `bash scripts/deploy.sh --clean` | Container + Volumes entfernen |
 | `bash scripts/deploy.sh --clean --full` | Alles inkl. Verzeichnisse entfernen |
 | `bash scripts/deploy.sh --backup` | DB-Dump erstellen |
-| `bash scripts/deploy.sh --migrate` | Migrationen ausfuehren |
-| `bash scripts/deploy.sh --check-ports` | Ports pruefen (bei mehreren Supabase-Instanzen) |
+| `bash scripts/deploy.sh --migrate` | Migrations-Info anzeigen |
+| `bash scripts/deploy.sh --check-ports` | Lokale Ports pruefen |
 | `bash scripts/server-init.sh` | Frischen Ubuntu Server 22.04+ einrichten |
 
 ### Server-Deployment Flow
 
 1. **Server vorbereiten** (einmalig auf frischem Ubuntu 22.04+):
    ```bash
-   # Script per scp auf Server kopieren und ausfuehren
    scp scripts/server-init.sh user@server:~/
    ssh user@server "bash ~/server-init.sh"
    ```
-   Installiert Docker, Node.js, Firewall, fail2ban, Reverse Proxy (Caddy/Nginx), klont das Repo.
+   Installiert Docker, Node.js, Firewall, fail2ban, Caddy, klont das Repo.
 
-2. **App deployen** (direkt nach server-init.sh oder fuer Updates):
+2. **App deployen:**
    ```bash
    bash /opt/projects/masitcon-tools-ameise/repo/scripts/deploy.sh
    ```
-   Fragt interaktiv nach Domain, Supabase-Credentials, baut Docker-Container, startet die App.
+   Fragt interaktiv nach Domain, Supabase-Credentials, baut alle Container (App + Supabase + Hono API), startet den Stack.
 
-3. **Updates einspielen**:
+3. **Updates einspielen:**
    ```bash
    bash scripts/deploy.sh --update --env production
    ```
-   Zieht den neuesten Stand vom Git, baut Container neu, startet sie.
 
-### Staging vs. Produktion
+### Caddy-Routing (Server)
 
-Das Deploy-Script unterstuetzt zwei Umgebungen: `production` (default) und `staging`.
-
-Beim interaktiven Server-Setup (`deploy.sh` ohne Flags) wird eine `.env.production` bzw. `.env.staging` mit den Supabase-Credentials generiert. Fuer manuelle Docker-Builds:
-
-```bash
-BUILD_MODE=staging docker compose -f scripts/docker-compose.yml up --build
-```
+Der Stack laeuft komplett hinter Caddy:
+- `DOMAIN` → App (statische Vite-SPA)
+- `DOMAIN/supabase/*` → Kong (Supabase API-Gateway, inkl. `/functions/v1/*` → Hono API)
 
 ## Projektstruktur
 
 ```
+api/
+  src/index.ts    # Hono.js API (3 Routes: create-employee, admin-update-user, employee-data-transfer)
+  Dockerfile      # Node.js 20 Alpine
+  package.json
 src/
   components/     # React-Komponenten
   hooks/          # Custom React Hooks
   integrations/   # Supabase Client + Types
   lib/            # Utilities (Berechnungen, PDF, Audit)
   pages/          # Seiten (Dashboard, Auth, NotFound)
+docker/
+  docker-compose.yml        # Produktions-Stack (App + Supabase + Hono API)
+  docker-compose.local.yml  # Lokaler Dev-Stack (Supabase + Hono API, App via npm run dev)
+  volumes/api/kong.yml      # Kong API-Gateway Konfiguration
+  .env.local.example        # Template fuer lokale Umgebungsvariablen
 supabase/
-  functions/      # Edge Functions (Deno)
-  migrations/     # SQL-Migrationen
+  functions/      # Originale Deno Edge Functions (Referenz, nicht mehr aktiv)
+  migrations/     # SQL-Migrationen (automatisch beim Stack-Start angewendet)
 scripts/
-  deploy.sh       # Deploy & Setup Script
-  server-init.sh  # Server-Initialisierung
-  Dockerfile      # Multi-Stage Docker Build
-  docker-compose.yml      # Produktions-Stack
-  docker-compose.local.yml # Lokaler Dev-Stack
-  caddy-snippet.conf      # Caddy Reverse Proxy Template
+  deploy.sh         # Deploy & Setup Script
+  server-init.sh    # Server-Initialisierung
+  Dockerfile        # Multi-Stage Docker Build (App)
+  caddy-snippet.conf # Caddy Reverse Proxy Template
 ```
+
+## npm Scripts
+
+| Script | Beschreibung |
+|--------|--------------|
+| `npm run dev` | Dev-Server starten |
+| `npm run build` | Produktions-Build |
+| `npm run lint` | ESLint ausfuehren |
+| `npm run preview` | Build-Preview |

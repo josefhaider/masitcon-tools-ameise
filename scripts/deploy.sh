@@ -17,7 +17,7 @@
 # Aufräumen:       bash scripts/deploy.sh --prune
 # Nur Migrationen: bash scripts/deploy.sh --migrate
 # Backup:          bash scripts/deploy.sh --backup
-# Port-Check:      bash scripts/deploy.sh --check-ports
+# Port-Check:      bash scripts/deploy.sh --check-ports (lokal)
 #
 # ===================================================================
 set -uo pipefail
@@ -154,7 +154,7 @@ Modi:
   --clean            Projekt entfernen (Container + Volumes + Configs)
   --clean --full     Alles entfernen inkl. Verzeichnisse, Backups, Logs
   --prune            Docker-System aufräumen (ungenutzte Images/Volumes)
-  --check-ports      Ports prüfen (Supabase) – zeigt Belegung, bietet Alternativen
+  --check-ports      Lokale Ports prüfen – zeigt Belegung und mögliche Konflikte
 
 Optionen:
   --env production|staging    Ziel-Umgebung (Default: production)
@@ -230,298 +230,730 @@ check_prerequisites() {
     log "Git       $(git --version | cut -d' ' -f3)"
 }
 
-check_supabase_cli() {
-    if ! command -v supabase >/dev/null 2>&1; then
-        err "Supabase CLI nicht gefunden"
-        info "Ubuntu/Debian:  sudo apt install supabase  (oder: https://supabase.com/docs/guides/cli)"
-        info "Mac:            brew install supabase/tap/supabase"
-        info "Alternativ:     npm install -g supabase"
+# ─── Lokal (Docker Compose) ──────────────────────────────────────
+LOCAL_COMPOSE_FILE="docker/docker-compose.local.yml"
+LOCAL_ENV_FILE="docker/.env.local"
+
+# Generiert docker/.env.local mit frischen kryptografischen Schlüsseln
+generate_local_env() {
+    header "Lokale Secrets generieren"
+
+    if ! command -v openssl >/dev/null 2>&1; then
+        err "openssl nicht gefunden – kann Schlüssel nicht generieren"
         exit 1
     fi
-    log "Supabase CLI $(supabase --version 2>/dev/null || echo 'installiert')"
+
+    info "Generiere kryptografische Schlüssel..."
+    generate_supabase_keys
+
+    mkdir -p docker
+    cat > "$LOCAL_ENV_FILE" << LOCALENV
+# ===================================================================
+# masitcon Zeiterfassung (Ameise) – Lokale Docker-Umgebung
+# Automatisch generiert von deploy.sh --local am $(date '+%Y-%m-%d %H:%M')
+# NICHT committen! (.gitignore bereits konfiguriert)
+# ===================================================================
+COMPOSE_PROJECT_NAME=ameise-local
+
+# Kryptografische Schlüssel
+JWT_SECRET=${DEPLOY_JWT_SECRET}
+POSTGRES_PASSWORD=${DEPLOY_POSTGRES_PASSWORD}
+ANON_KEY=${DEPLOY_ANON_KEY}
+SERVICE_ROLE_KEY=${DEPLOY_SERVICE_ROLE_KEY}
+PG_META_CRYPTO_KEY=${DEPLOY_PG_META_CRYPTO_KEY}
+
+# Ports
+APP_PORT=8080
+API_PORT=8100
+DB_PORT=5433
+STUDIO_PORT=3101
+INBUCKET_WEB_PORT=9000
+INBUCKET_SMTP_PORT=2500
+
+# URLs
+SITE_URL=http://localhost:8080
+SITE_HOSTNAME=localhost
+API_EXTERNAL_URL=http://localhost:8100
+VITE_SUPABASE_URL=http://localhost:8100
+
+# Build
+BUILD_MODE=development
+
+# Edge Functions
+DATA_TRANSFER_PASSWORD=ameise-local-transfer
+
+# SMTP → Inbucket (lokal, kein echter Versand)
+SMTP_ADMIN_EMAIL=admin@ameise.local
+SMTP_SENDER_NAME="Ameise Local"
+LOCALENV
+    chmod 600 "$LOCAL_ENV_FILE"
+    log "Lokale Secrets generiert: ${LOCAL_ENV_FILE}"
+    warn "Nicht committen! (.gitignore bereits gesetzt)"
 }
 
-# ─── Port-Check vor Supabase (PFLICHT – mehrere Instanzen auf Server) ─
-# Liest Ports aus supabase/config.toml, zeigt Belegung, bietet freie Alternativen
+# Prüft ob die lokalen Docker-Ports frei sind (8100, 5433, 3101, 9000)
+check_local_ports() {
+    header "Port-Check (Lokale Umgebung)"
 
-read_supabase_ports() {
-    local config="${1:-supabase/config.toml}"
-    [ ! -f "$config" ] && { echo "54331 54332 54333 54334 54337"; return; }
-    grep -E "^\s*port\s*=" "$config" 2>/dev/null | awk -F= '{gsub(/[^0-9]/,"",$2); if($2) print $2}' | sort -nu
-}
-
-# Zeigt welcher Prozess/Container einen Port belegt
-get_port_occupant() {
-    local port="$1"
-    # Docker-Container (häufigste Ursache bei mehreren Supabase-Instanzen)
-    if command -v docker >/dev/null 2>&1; then
-        local dc; dc=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E ":${port}(->|/|[^0-9]|$)" | head -1)
-        [ -n "$dc" ] && { echo "Docker: ${dc%% *}"; return; }
+    local api_port=8100 db_port=5433 studio_port=3101 inbucket_port=9000
+    if [ -f "$LOCAL_ENV_FILE" ]; then
+        local v
+        v=$(grep -E "^API_PORT=" "$LOCAL_ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+        [ -n "$v" ] && api_port="$v"
+        v=$(grep -E "^DB_PORT=" "$LOCAL_ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+        [ -n "$v" ] && db_port="$v"
+        v=$(grep -E "^STUDIO_PORT=" "$LOCAL_ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+        [ -n "$v" ] && studio_port="$v"
+        v=$(grep -E "^INBUCKET_WEB_PORT=" "$LOCAL_ENV_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+        [ -n "$v" ] && inbucket_port="$v"
     fi
-    # ss (Ubuntu/Linux – Standard)
-    if command -v ss >/dev/null 2>&1; then
-        local s; s=$(ss -tlnp 2>/dev/null | grep ":${port} ")
-        [ -n "$s" ] && { echo "Socket: $(echo "$s" | awk '{print $6}')"; return; }
-    fi
-    # lsof (Fallback, z.B. Mac)
-    if command -v lsof >/dev/null 2>&1; then
-        local l; l=$(lsof -iTCP:${port} -sTCP:LISTEN -nP 2>/dev/null | tail -1)
-        [ -n "$l" ] && { echo "Prozess: $(echo "$l" | awk '{print $1, $2}')"; return; }
-    fi
-    echo "unbekannt"
-}
 
-# Hauptfunktion: Prüft alle Supabase-Ports, blockiert bei Konflikt
-# Gibt 0 zurück wenn alle frei, 1 bei Konflikt (oder nach Abbruch)
-check_ports_before_supabase() {
-    header "Port-Check (Supabase)"
-    local ports
-    ports=($(read_supabase_ports))
-    [ ${#ports[@]} -eq 0 ] && ports=(54331 54332 54333 54334 54337)
-
-    local occupied=()
-    local details=()
-
-    for p in "${ports[@]}"; do
-        if is_port_free "$p"; then
-            log "Port $p: frei"
+    local all_free=true
+    for entry in "${api_port}:API (Kong)" "${db_port}:PostgreSQL" "${studio_port}:Studio" "${inbucket_port}:Inbucket"; do
+        local port="${entry%%:*}"
+        local label="${entry#*:}"
+        if is_port_free "$port"; then
+            log "Port ${port} (${label}): frei"
         else
-            local occ; occ=$(get_port_occupant "$p")
-            occupied+=("$p")
-            details+=("  $p → $occ")
+            local occ; occ=$(get_port_occupant "$port")
+            warn "Port ${port} (${label}): BELEGT – ${occ}"
+            all_free=false
         fi
     done
 
-    if [ ${#occupied[@]} -gt 0 ]; then
+    if [ "$all_free" = false ]; then
         echo ""
-        warn "Folgende Ports sind belegt:"
-        printf '%s\n' "${details[@]}"
+        info "Tipp: Stack bereits gestartet? → docker ps | grep ameise-local"
+        info "      Anderes Projekt am gleichen Port? → Ports in docker/.env.local anpassen"
         echo ""
-        info "Alle laufenden Docker-Container:"
-        docker ps --format '  {{.Names}} ({{.Ports}})' 2>/dev/null | head -20 || true
-        echo ""
-        info "Alle Ports 543xx im Einsatz:"
-        (ss -tlnp 2>/dev/null || lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null) | grep -E ":54[0-9]{3}\s" | head -15 || true
-        echo ""
-
-        # Option: Freie Alternativ-Ports finden und config.toml anpassen
-        local base=54331
-        local free_ports=()
-        local i=0
-        while [ $i -le 100 ]; do
-            local candidate=$((base + i))
-            if is_port_free "$candidate"; then
-                free_ports+=("$candidate")
-                [ ${#free_ports[@]} -ge 5 ] && break
-            fi
-            i=$((i + 1))
-        done
-
-        if [ ${#free_ports[@]} -ge 5 ]; then
-            info "Freie Port-Block-Alternative gefunden: ${free_ports[*]}"
-            if confirm "supabase/config.toml mit diesen Ports aktualisieren?" "j"; then
-                _update_config_ports "${free_ports[@]}" && return 0
-            fi
-        fi
-
-        warn "Lösung: Andere Supabase-Instanz stoppen (supabase stop) oder Ports in supabase/config.toml anpassen."
-        confirm "Trotzdem fortfahren (Start wird wahrscheinlich fehlschlagen)?" "n" || exit 1
+        confirm "Trotzdem fortfahren (Stack-Start kann fehlschlagen)?" "j" || exit 1
     else
-        log "Alle Supabase-Ports frei"
+        log "Alle lokalen Ports frei"
     fi
 }
 
-# Aktualisiert config.toml mit neuem Port-Block
-_update_config_ports() {
-    local api_port="${1:-54331}" db_port="${2:-54332}" studio_port="${3:-54333}" inbucket_port="${4:-54334}" analytics_port="${5:-54337}"
-    local config="supabase/config.toml"
-    [ ! -f "$config" ] && { err "config.toml nicht gefunden"; return 1; }
-
-    cp "$config" "${config}.bak"
-    local in_section=""
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^\[api\] ]]; then in_section="api"; fi
-        if [[ "$line" =~ ^\[db\] ]]; then in_section="db"; fi
-        if [[ "$line" =~ ^\[studio\] ]]; then in_section="studio"; fi
-        if [[ "$line" =~ ^\[inbucket\] ]]; then in_section="inbucket"; fi
-        if [[ "$line" =~ ^\[analytics\] ]]; then in_section="analytics"; fi
-        if [[ "$line" =~ ^[[:space:]]*port[[:space:]]*=[[:space:]]*[0-9]+ ]]; then
-            case "$in_section" in
-                api)      echo "port = ${api_port}" ;;
-                db)       echo "port = ${db_port}" ;;
-                studio)   echo "port = ${studio_port}" ;;
-                inbucket) echo "port = ${inbucket_port}" ;;
-                analytics) echo "port = ${analytics_port}" ;;
-                *)        echo "$line" ;;
-            esac
-        else
-            echo "$line"
+# Wartet bis der lokale DB-Container gesund ist (max 90s)
+wait_for_local_db() {
+    local proj="${COMPOSE_PROJECT_NAME:-ameise-local}"
+    local container="${proj}-db"
+    info "Warte auf Datenbank-Container '${container}' (max 90s)..."
+    local i=0
+    while [ $i -lt 90 ]; do
+        if docker exec "$container" pg_isready -U postgres -q 2>/dev/null; then
+            echo ""
+            log "Datenbank bereit"
+            return 0
         fi
-    done < "$config" > "${config}.new" && mv "${config}.new" "$config"
-
-    log "config.toml aktualisiert: API=$api_port DB=$db_port Studio=$studio_port"
-    return 0
+        sleep 3
+        i=$((i + 3))
+        printf "."
+    done
+    echo ""
+    warn "Timeout – Datenbank möglicherweise noch nicht bereit."
+    warn "  Logs prüfen: docker logs ${container}"
+    return 1
 }
 
-# ─── Lokal ───────────────────────────────────────────────────────
 setup_local() {
     header "Lokale Entwicklungsumgebung – ${PROJECT_DISPLAY}"
 
-    check_supabase_cli
-    check_ports_before_supabase
+    # Voraussetzungen: docker und compose müssen installiert sein
+    check_prerequisites
 
-    info "Starte lokale Supabase-Instanz..."
-    supabase start || { err "Supabase Start fehlgeschlagen"; exit 1; }
+    # docker/.env.local: neu generieren oder laden
+    if [ ! -f "$LOCAL_ENV_FILE" ]; then
+        info "Keine lokale Konfiguration gefunden – generiere neue Secrets..."
+        generate_local_env
+    else
+        info "Lokale Konfiguration gefunden: ${LOCAL_ENV_FILE}"
+    fi
 
-    local s; s=$(supabase status 2>/dev/null)
-    local URL KEY SRV
-    URL=$(echo "$s" | grep "API URL"          | awk '{print $NF}')
-    KEY=$(echo "$s" | grep "anon key"         | awk '{print $NF}')
-    SRV=$(echo "$s" | grep "service_role key" | awk '{print $NF}')
+    # Variablen aus docker/.env.local laden
+    # shellcheck source=/dev/null
+    source "$LOCAL_ENV_FILE"
+    local proj="${COMPOSE_PROJECT_NAME:-ameise-local}"
 
-    log "API: $URL"
+    echo ""
+    echo -e "  ${BOLD}Lokale Konfiguration:${NC}"
+    printf "    %-30s %s\n" "COMPOSE_PROJECT_NAME:" "$proj"
+    printf "    %-30s %s\n" "API (Kong):"           "http://localhost:${API_PORT:-8100}"
+    printf "    %-30s %s\n" "Studio:"                "http://localhost:${STUDIO_PORT:-3101}"
+    printf "    %-30s %s\n" "PostgreSQL:"            "localhost:${DB_PORT:-5433}"
+    printf "    %-30s %s\n" "Inbucket (E-Mails):"   "http://localhost:${INBUCKET_WEB_PORT:-9000}"
+    echo ""
 
-    cat > .env << LOCALENV
+    # Port-Check
+    check_local_ports
+
+    # Compose-Datei prüfen
+    if [ ! -f "$LOCAL_COMPOSE_FILE" ]; then
+        err "Compose-Datei nicht gefunden: ${LOCAL_COMPOSE_FILE}"
+        info "Repo-Zustand prüfen: git status"
+        exit 1
+    fi
+
+    # Stack starten
+    local DC; DC=$(detect_compose)
+    [ -z "$DC" ] && { err "Docker Compose nicht gefunden – bitte installieren"; exit 1; }
+
+    info "Starte lokalen Supabase-Stack (${proj})..."
+    $DC -f "$LOCAL_COMPOSE_FILE" --env-file "$LOCAL_ENV_FILE" up -d \
+        || { err "docker compose up fehlgeschlagen"; exit 1; }
+
+    # Auf DB warten (Migrations werden beim ersten Start automatisch angewendet)
+    wait_for_local_db
+
+    # PostgREST Schema-Cache neu laden (cached Schema beim Start vor Migrations-Ende)
+    local proj="${COMPOSE_PROJECT_NAME:-ameise-local}"
+    info "PostgREST Schema-Reload..."
+    sleep 3  # kurz warten bis PostgREST gestartet ist
+    docker exec "${proj}-db" psql -U postgres -d postgres -q \
+        -c "NOTIFY pgrst, 'reload schema';" 2>/dev/null || true
+    log "PostgREST Schema aktualisiert"
+
+    # Env-Variablen neu laden (sicherstellen dass alle gesetzt sind)
+    # shellcheck source=/dev/null
+    source "$LOCAL_ENV_FILE"
+    local anon_key="${ANON_KEY:-}"
+    local service_key="${SERVICE_ROLE_KEY:-}"
+    local api_port="${API_PORT:-8100}"
+    local studio_port="${STUDIO_PORT:-3101}"
+    local db_port="${DB_PORT:-5433}"
+    local inbucket_port="${INBUCKET_WEB_PORT:-9000}"
+    local data_transfer_pw="${DATA_TRANSFER_PASSWORD:-ameise-local-transfer}"
+
+    # .env schreiben (Vite liest diese während `npm run dev`)
+    cat > .env << DOTENV
 # ================================================================
 # ${PROJECT_DISPLAY} – Lokale Entwicklung (automatisch generiert)
+# Nicht committen! Wird von deploy.sh --local überschrieben.
 # ================================================================
-VITE_SUPABASE_URL=${URL}
-VITE_SUPABASE_ANON_KEY=${KEY}
-LOCALENV
+VITE_SUPABASE_URL=http://localhost:${api_port}
+VITE_SUPABASE_ANON_KEY=${anon_key}
+DOTENV
     chmod 600 .env
-    log ".env geschrieben"
+    log ".env geschrieben (Vite)"
 
-    if [ -n "$SRV" ]; then
-        mkdir -p supabase
-        cat > supabase/.env << SUPABASEENV
-SUPABASE_URL=${URL}
-SUPABASE_SERVICE_ROLE_KEY=${SRV}
-DATA_TRANSFER_PASSWORD=ameise-local-transfer
-ALLOWED_ORIGIN=http://localhost:8080
-SUPABASEENV
-        chmod 600 supabase/.env
-        log "supabase/.env geschrieben (für Edge Functions)"
+    # npm install falls node_modules fehlt
+    if [ ! -d "node_modules" ]; then
+        info "Installiere Dependencies..."
+        if [ -f "package-lock.json" ]; then
+            npm ci --silent 2>/dev/null || npm install
+        else
+            npm install
+        fi
+        log "Dependencies installiert"
     fi
 
-    if [ "$HAS_MIGRATIONS" = "true" ]; then
-        confirm "Datenbank zurücksetzen und Migrationen ausführen?" "j" \
-            && { supabase db reset; log "Migrationen ausgeführt"; }
+    echo ""
+    echo -e "${BOLD}${GREEN}╔═══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${GREEN}║   Lokaler Stack bereit!                               ║${NC}"
+    echo -e "${BOLD}${GREEN}╚═══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  ${BOLD}URLs:${NC}"
+    printf "    %-30s %s\n" "App (startet gleich):"  "http://localhost:${APP_PORT}"
+    printf "    %-30s %s\n" "Supabase API (Kong):"   "http://localhost:${api_port}"
+    printf "    %-30s %s\n" "Supabase Studio:"        "http://localhost:${studio_port}"
+    printf "    %-30s %s\n" "Inbucket (E-Mails):"    "http://localhost:${inbucket_port}"
+    printf "    %-30s %s\n" "PostgreSQL (direkt):"   "localhost:${db_port}"
+    printf "    %-30s %s\n" "Hono API (Functions):"  "http://localhost:${api_port}/functions/v1"
+    echo ""
+    echo -e "  ${BOLD}Weitere Befehle:${NC}"
+    echo "    Stack stoppen:   docker compose -f docker/docker-compose.local.yml down"
+    echo "    Stack neu:       docker compose -f docker/docker-compose.local.yml down -v"
+    echo "    Stack-Logs:      docker compose -f docker/docker-compose.local.yml logs -f"
+    echo "    API-Logs:        docker compose -f docker/docker-compose.local.yml logs -f api"
+    echo ""
+
+    # Optional: Cloud-Datenmigration anbieten
+    if [ -f "scripts/migrate-from-cloud.sh" ]; then
+        if confirm "Daten von Supabase Cloud einmalig migrieren?" "n"; then
+            bash scripts/migrate-from-cloud.sh
+        fi
     fi
 
-    [ -f "package-lock.json" ] && npm ci 2>/dev/null || npm install
-    log "Dependencies installiert"
-
     echo ""
-    echo -e "  ${BOLD}Supabase Studio:${NC}  http://127.0.0.1:54333"
-    echo -e "  ${BOLD}App:${NC}              http://localhost:${APP_PORT}"
-    echo ""
-    info "Edge Functions separat starten: supabase functions serve --env-file supabase/.env"
+    echo -e "  ${DIM}Strg+C beendet npm run dev (Stack läuft weiter im Hintergrund)${NC}"
     echo ""
     npm run dev
 }
 
+# ─── Supabase-Key-Generierung ────────────────────────────────────
+# Generiert JWT_SECRET, POSTGRES_PASSWORD, ANON_KEY, SERVICE_ROLE_KEY
+# und PG_META_CRYPTO_KEY via openssl (reine Bash-JWT-Implementierung).
+
+_base64url_encode() {
+    openssl base64 -e -A | tr '+/' '-_' | tr -d '='
+}
+
+_generate_jwt() {
+    local role="$1" secret="$2"
+    local iat exp header payload signature
+    iat=$(date +%s)
+    exp=4102444800  # 2099-12-31
+    header=$(printf '{"alg":"HS256","typ":"JWT"}' | _base64url_encode)
+    payload=$(printf '{"role":"%s","iss":"supabase","iat":%d,"exp":%d}' "$role" "$iat" "$exp" | _base64url_encode)
+    signature=$(printf '%s.%s' "$header" "$payload" \
+        | openssl dgst -sha256 -hmac "$secret" -binary \
+        | _base64url_encode)
+    printf '%s.%s.%s' "$header" "$payload" "$signature"
+}
+
+generate_supabase_keys() {
+    info "Generiere Supabase-Schlüssel automatisch..."
+    DEPLOY_JWT_SECRET=$(openssl rand -hex 32)
+    DEPLOY_POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/\n' | head -c 32)
+    DEPLOY_ANON_KEY=$(_generate_jwt "anon" "$DEPLOY_JWT_SECRET")
+    DEPLOY_SERVICE_ROLE_KEY=$(_generate_jwt "service_role" "$DEPLOY_JWT_SECRET")
+    DEPLOY_PG_META_CRYPTO_KEY=$(openssl rand -hex 16)
+    log "Schlüssel generiert"
+}
+
 # ─── Server: Konfiguration abfragen ─────────────────────────────
+
+# Globale Deploy-Variablen (werden in collect_config gesetzt)
+DEPLOY_DOMAIN=""
+DEPLOY_PROTOCOL="https"
+DEPLOY_GIT_REMOTE=""
+DEPLOY_GIT_BRANCH="master"
+DEPLOY_APP_PORT=""
+DEPLOY_API_PORT=""
+DEPLOY_DB_PORT=""
+DEPLOY_STUDIO_PORT=""
+DEPLOY_COMPOSE_PROJECT=""
+DEPLOY_JWT_SECRET=""
+DEPLOY_POSTGRES_PASSWORD=""
+DEPLOY_ANON_KEY=""
+DEPLOY_SERVICE_ROLE_KEY=""
+DEPLOY_PG_META_CRYPTO_KEY=""
+DEPLOY_DATA_TRANSFER_PASSWORD=""
+SMTP_HOST=""
+SMTP_PORT="465"
+SMTP_USER=""
+SMTP_PASS=""
+SMTP_ADMIN_EMAIL=""
+SMTP_SENDER_NAME="Ameise"
+
+# Lädt gespeicherte Konfiguration (idempotenter Re-Run)
+_load_saved_config() {
+    local cfg="${DIR_BASE}/config.env"
+    [ -f "$cfg" ] || return 0
+    # shellcheck source=/dev/null
+    source "$cfg"
+    echo -e "  ${GREEN}✓${NC} Vorherige Konfiguration geladen."
+    echo -e "  ${DIM}Enter = bisherigen Wert übernehmen.${NC}"
+    echo ""
+}
+
+# Speichert nicht-sensible Konfiguration für Re-Runs
+_save_config() {
+    local cfg="${DIR_BASE}/config.env"
+    mkdir -p "$DIR_BASE"
+    cat > "$cfg" << SAVEDCFG
+# Gespeicherte Konfiguration – ${PROJECT_DISPLAY}
+# Automatisch von deploy.sh generiert – nicht manuell bearbeiten
+DEPLOY_DOMAIN=${DEPLOY_DOMAIN}
+DEPLOY_PROTOCOL=${DEPLOY_PROTOCOL}
+DEPLOY_GIT_REMOTE=${DEPLOY_GIT_REMOTE}
+DEPLOY_GIT_BRANCH=${DEPLOY_GIT_BRANCH}
+DEPLOY_APP_PORT=${DEPLOY_APP_PORT}
+DEPLOY_API_PORT=${DEPLOY_API_PORT}
+DEPLOY_DB_PORT=${DEPLOY_DB_PORT}
+DEPLOY_STUDIO_PORT=${DEPLOY_STUDIO_PORT}
+DEPLOY_COMPOSE_PROJECT=${DEPLOY_COMPOSE_PROJECT}
+SMTP_HOST=${SMTP_HOST}
+SMTP_PORT=${SMTP_PORT}
+SMTP_USER=${SMTP_USER}
+SMTP_ADMIN_EMAIL=${SMTP_ADMIN_EMAIL}
+SMTP_SENDER_NAME=${SMTP_SENDER_NAME}
+SAVEDCFG
+    chmod 600 "$cfg"
+}
+
 collect_config() {
     header "Server-Konfiguration"
 
     # Umgebung abfragen wenn nicht per --env gesetzt
     if [ "$ENV_EXPLICIT" != true ]; then
-        info "Ziel-Umgebung: 1) production  2) staging"
+        echo "  Welche Umgebung einrichten?"
+        echo "    1) production"
+        echo "    2) staging"
+        echo ""
         local c; c=$(ask "Auswahl [1/2]" "1")
         case "$c" in
             2) ENV_TARGET="staging" ;;
             *) ENV_TARGET="production" ;;
         esac
-        # Pfade aktualisieren
         DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
         DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
         DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
     fi
     log "Umgebung: ${ENV_TARGET}"
+    echo ""
 
-    DEPLOY_DOMAIN=$(ask "Domain (z.B. zeiterfassung.example.com)" "")
+    # Gespeicherte Config laden (idempotenz)
+    _load_saved_config
+
+    # ── 1. Git ───────────────────────────────────────────────────
+    header "1/5  Git-Repository"
+
+    local default_remote="${DEPLOY_GIT_REMOTE:-}"
+    if [ -z "$default_remote" ] && git remote get-url origin >/dev/null 2>&1; then
+        default_remote=$(git remote get-url origin 2>/dev/null)
+    fi
+    DEPLOY_GIT_REMOTE=$(ask "Git Remote URL" "${default_remote:-git@github.com:josefhaider/masitcon-tools-ameise.git}")
+    DEPLOY_GIT_BRANCH=$(ask "Git Branch" "${DEPLOY_GIT_BRANCH:-master}")
+
+    # ── 2. Domain & Protokoll ────────────────────────────────────
+    header "2/5  Domain"
+
+    echo "  ${DIM}Unter welcher Adresse ist die App im Browser erreichbar?${NC}"
+    echo "  ${DIM}Beispiel: zeiterfassung.example.com${NC}"
+    echo ""
+    DEPLOY_DOMAIN=$(ask "Domain" "${DEPLOY_DOMAIN:-}")
     if [ -z "$DEPLOY_DOMAIN" ]; then
         err "Domain ist Pflicht"; exit 1
     fi
 
-    DEPLOY_PROTOCOL=$(ask "Protokoll (http/https)" "https")
+    echo ""
+    echo "  Protokoll:"
+    echo "    1) HTTPS  (empfohlen – Caddy holt Zertifikat automatisch)"
+    echo "    2) HTTP   (nur für interne/lokale Server)"
+    echo ""
+    local default_proto_choice="1"
+    [ "${DEPLOY_PROTOCOL:-https}" = "http" ] && default_proto_choice="2"
+    local proto_choice; proto_choice=$(ask "Auswahl" "$default_proto_choice")
+    [ "$proto_choice" = "2" ] && DEPLOY_PROTOCOL="http" || DEPLOY_PROTOCOL="https"
 
-    info "Supabase-Zugangsdaten (externe Instanz – Cloud oder selbst gehostet)"
-    DEPLOY_SUPABASE_URL=$(ask "Supabase URL (z.B. https://xxx.supabase.co)" "")
-    DEPLOY_SUPABASE_ANON_KEY=$(ask_secret "Supabase Anon Key")
+    # Abgeleitete URLs (automatisch berechnet – kein manuelles Eingreifen nötig)
+    local SITE_URL="${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}"
+    local API_EXTERNAL_URL="${SITE_URL}/supabase"    # Kong via Caddy-Pfadrouting
+    local VITE_SUPABASE_URL="${API_EXTERNAL_URL}"    # zur Build-Zeit eingebettet
+    local SITE_HOSTNAME="${DEPLOY_DOMAIN}"
 
-    DEPLOY_GIT_REMOTE=$(ask "Git Remote URL (SSH)" "git@github.com:josefhaider/masitcon-tools-ameise.git")
-    DEPLOY_GIT_BRANCH=$(ask "Git Branch" "master")
+    log "App-URL:   ${SITE_URL}"
+    log "API-URL:   ${API_EXTERNAL_URL}  (Kong via /supabase/*)"
 
-    log "Konfiguration gesammelt"
+    # ── 3. Supabase-Schlüssel ────────────────────────────────────
+    header "3/5  Supabase-Schlüssel"
+
+    echo "  ${DIM}Alle kryptografischen Schlüssel werden automatisch generiert.${NC}"
+    echo "  ${DIM}Du kannst sie nach der Anzeige übernehmen oder manuell überschreiben.${NC}"
+    echo ""
+
+    if ! command -v openssl >/dev/null 2>&1; then
+        err "openssl nicht gefunden – kann Schlüssel nicht generieren"
+        info "Installation: sudo apt install openssl"
+        exit 1
+    fi
+
+    # Bereits vorhandene Schlüssel aus gespeicherter .env laden
+    local secrets_file="${DIR_BASE}/secrets.env"
+    if [ -f "$secrets_file" ]; then
+        # shellcheck source=/dev/null
+        source "$secrets_file"
+        warn "Vorhandene Schlüssel aus secrets.env geladen – NICHT neu generieren!"
+        warn "(Neue Schlüssel würden alle bestehenden Sessions ungültig machen)"
+        echo ""
+        if ! confirm "Vorhandene Schlüssel beibehalten?" "j"; then
+            generate_supabase_keys
+        fi
+    else
+        generate_supabase_keys
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Generierte Schlüssel:${NC}"
+    echo -e "  ${DIM}JWT_SECRET:        ${DEPLOY_JWT_SECRET:0:8}...${NC}"
+    echo -e "  ${DIM}POSTGRES_PASSWORD: ${DEPLOY_POSTGRES_PASSWORD:0:4}...${NC}"
+    echo -e "  ${DIM}ANON_KEY:          ${DEPLOY_ANON_KEY:0:20}...${NC}"
+    echo -e "  ${DIM}SERVICE_ROLE_KEY:  ${DEPLOY_SERVICE_ROLE_KEY:0:20}...${NC}"
+    echo ""
+
+    if confirm "Schlüssel manuell überschreiben?" "n"; then
+        echo ""
+        info "Enter lässt den generierten Wert unverändert."
+        echo ""
+        local v
+        v=$(ask "JWT_SECRET" "$DEPLOY_JWT_SECRET"); [ -n "$v" ] && DEPLOY_JWT_SECRET="$v"
+        v=$(ask "POSTGRES_PASSWORD" "$DEPLOY_POSTGRES_PASSWORD"); [ -n "$v" ] && DEPLOY_POSTGRES_PASSWORD="$v"
+        v=$(ask "ANON_KEY" "$DEPLOY_ANON_KEY"); [ -n "$v" ] && DEPLOY_ANON_KEY="$v"
+        v=$(ask "SERVICE_ROLE_KEY" "$DEPLOY_SERVICE_ROLE_KEY"); [ -n "$v" ] && DEPLOY_SERVICE_ROLE_KEY="$v"
+    fi
+
+    # Datentransfer-Passwort (Edge Function)
+    echo ""
+    echo "  ${DIM}Die Edge Function 'employee-data-transfer' benötigt ein Passwort${NC}"
+    echo "  ${DIM}für den gesicherten Datenaustausch zwischen Mandanten.${NC}"
+    echo ""
+    if [ -n "${DEPLOY_DATA_TRANSFER_PASSWORD:-}" ]; then
+        info "Bestehendes Datentransfer-Passwort beibehalten (Enter)"
+        local dtp; dtp=$(ask_secret "Datentransfer-Passwort (Enter = beibehalten)")
+        [ -n "$dtp" ] && DEPLOY_DATA_TRANSFER_PASSWORD="$dtp"
+    else
+        DEPLOY_DATA_TRANSFER_PASSWORD=$(ask_secret "Datentransfer-Passwort (Enter = auto)")
+        if [ -z "$DEPLOY_DATA_TRANSFER_PASSWORD" ]; then
+            DEPLOY_DATA_TRANSFER_PASSWORD=$(openssl rand -base64 12 | tr -d '=+/')
+            log "Datentransfer-Passwort auto-generiert"
+        fi
+    fi
+
+    # ── 4. E-Mail / SMTP (optional) ─────────────────────────────
+    header "4/5  E-Mail (SMTP) – optional"
+
+    echo "  ${DIM}Supabase Auth versendet E-Mails für Passwort-Reset und Einladungen.${NC}"
+    echo "  ${DIM}Ohne SMTP funktioniert die App, aber E-Mails werden nicht zugestellt.${NC}"
+    echo ""
+
+    local configure_smtp=false
+    if [ -n "${SMTP_HOST:-}" ]; then
+        info "Vorhandene SMTP-Konfiguration: ${SMTP_HOST}:${SMTP_PORT} (${SMTP_USER})"
+        configure_smtp=true
+    else
+        confirm "SMTP konfigurieren?" "j" && configure_smtp=true
+    fi
+
+    if $configure_smtp; then
+        SMTP_HOST=$(ask "SMTP-Host" "${SMTP_HOST:-smtp.example.com}")
+        SMTP_PORT=$(ask "SMTP-Port (465=SMTPS, 587=STARTTLS)" "${SMTP_PORT:-465}")
+        SMTP_USER=$(ask "SMTP-Benutzername / E-Mail-Adresse" "${SMTP_USER:-}")
+
+        local prev_pass_hint=""
+        [ -n "${SMTP_PASS:-}" ] && prev_pass_hint=" (Enter = bisheriges behalten)"
+        local new_pass; new_pass=$(ask_secret "SMTP-Passwort${prev_pass_hint}")
+        [ -n "$new_pass" ] && SMTP_PASS="$new_pass"
+
+        echo ""
+        SMTP_ADMIN_EMAIL=$(ask "Absender-E-Mail" "${SMTP_ADMIN_EMAIL:-${SMTP_USER}}")
+        SMTP_SENDER_NAME=$(ask "Absendername (erscheint in E-Mails)" "${SMTP_SENDER_NAME:-Ameise}")
+        echo ""
+
+        # SMTP-Verbindungstest
+        if [ -n "$SMTP_PASS" ] && command -v openssl >/dev/null 2>&1; then
+            info "Teste SMTP-Verbindung zu ${SMTP_HOST}:${SMTP_PORT}..."
+            local test_result
+            if [ "$SMTP_PORT" = "465" ]; then
+                test_result=$(echo "QUIT" | timeout 8 openssl s_client \
+                    -connect "${SMTP_HOST}:${SMTP_PORT}" -quiet 2>&1 || true)
+            else
+                test_result=$(echo "QUIT" | timeout 8 openssl s_client \
+                    -connect "${SMTP_HOST}:${SMTP_PORT}" -starttls smtp -quiet 2>&1 || true)
+            fi
+            if echo "$test_result" | grep -qi "220\|250\|ok\|connected"; then
+                log "SMTP-Verbindung erfolgreich"
+            else
+                warn "SMTP-Verbindung konnte nicht verifiziert werden (Firewall? Falscher Host?)"
+                warn "Die Konfiguration wird trotzdem gespeichert."
+            fi
+        fi
+    else
+        SMTP_HOST="" SMTP_PORT="465" SMTP_USER="" SMTP_PASS="" SMTP_ADMIN_EMAIL="" SMTP_SENDER_NAME="Ameise"
+        info "SMTP übersprungen. Später eintragen: ${DIR_BASE}/secrets.env → Stack neu starten."
+    fi
+
+    # ── 5. Ports ─────────────────────────────────────────────────
+    header "5/5  Ports"
+
+    echo "  ${DIM}Ports werden automatisch gesucht. Alle binden an 127.0.0.1 –${NC}"
+    echo "  ${DIM}kein Internetzugriff ohne Caddy.${NC}"
+    echo ""
+    echo "  ${DIM}Studio-Port: nur via SSH-Tunnel erreichbar.${NC}"
+    echo ""
+
+    # Startpunkte (aus gespeicherter Config oder Defaults)
+    local start_app="${DEPLOY_APP_PORT:-8080}"
+    local start_api="${DEPLOY_API_PORT:-8100}"
+    local start_db="${DEPLOY_DB_PORT:-5440}"
+    local start_studio="${DEPLOY_STUDIO_PORT:-3100}"
+
+    DEPLOY_APP_PORT=$(find_free_port "$start_app")
+    [ -z "$DEPLOY_APP_PORT" ] && DEPLOY_APP_PORT="$start_app"
+
+    DEPLOY_API_PORT=$(find_free_port "$start_api")
+    [ -z "$DEPLOY_API_PORT" ] && DEPLOY_API_PORT="$start_api"
+
+    DEPLOY_DB_PORT=$(find_free_port "$start_db")
+    [ -z "$DEPLOY_DB_PORT" ] && DEPLOY_DB_PORT="$start_db"
+
+    DEPLOY_STUDIO_PORT=$(find_free_port "$start_studio")
+    [ -z "$DEPLOY_STUDIO_PORT" ] && DEPLOY_STUDIO_PORT="$start_studio"
+
+    echo "  Gefundene freie Ports:"
+    printf "    %-30s %s" "App (serve):" "$DEPLOY_APP_PORT"
+    is_port_free "$DEPLOY_APP_PORT" && echo -e "  ${GREEN}frei${NC}" || echo -e "  ${RED}BELEGT${NC}"
+    printf "    %-30s %s" "Supabase API (Kong):" "$DEPLOY_API_PORT"
+    is_port_free "$DEPLOY_API_PORT" && echo -e "  ${GREEN}frei${NC}" || echo -e "  ${RED}BELEGT${NC}"
+    printf "    %-30s %s" "PostgreSQL:" "$DEPLOY_DB_PORT"
+    is_port_free "$DEPLOY_DB_PORT" && echo -e "  ${GREEN}frei${NC}" || echo -e "  ${RED}BELEGT${NC}"
+    printf "    %-30s %s" "Studio (SSH-Tunnel):" "$DEPLOY_STUDIO_PORT"
+    is_port_free "$DEPLOY_STUDIO_PORT" && echo -e "  ${GREEN}frei${NC}" || echo -e "  ${RED}BELEGT${NC}"
+    echo ""
+
+    if ! confirm "Ports übernehmen?" "j"; then
+        echo ""
+        info "Ports einzeln eingeben (Enter = vorgeschlagenen Wert):"
+        DEPLOY_APP_PORT=$(ask "  App (serve)" "$DEPLOY_APP_PORT")
+        DEPLOY_API_PORT=$(ask "  Supabase API (Kong)" "$DEPLOY_API_PORT")
+        DEPLOY_DB_PORT=$(ask "  PostgreSQL" "$DEPLOY_DB_PORT")
+        DEPLOY_STUDIO_PORT=$(ask "  Studio" "$DEPLOY_STUDIO_PORT")
+    fi
+
+    # Belegte Ports als Fehler
+    for _p in "$DEPLOY_APP_PORT" "$DEPLOY_API_PORT" "$DEPLOY_DB_PORT" "$DEPLOY_STUDIO_PORT"; do
+        if ! is_port_free "$_p"; then
+            local _occ; _occ=$(get_port_occupant "$_p")
+            err "Port $_p ist belegt: $_occ"
+            err "Stoppe den Prozess oder wähle einen anderen Port."
+            exit 1
+        fi
+    done
+
+    # Container-Prefix: automatisch aus Projektname + Umgebung
+    local default_cpn="${PROJECT_NAME}-${ENV_TARGET}"
+    DEPLOY_COMPOSE_PROJECT=$(ask "Container-Prefix (COMPOSE_PROJECT_NAME)" "${DEPLOY_COMPOSE_PROJECT:-$default_cpn}")
+
+    # Konfiguration speichern
+    _save_config
+    log "Konfiguration gespeichert: ${DIR_BASE}/config.env"
+
+    # Abgeleitete Variablen exportieren (für write_env_file)
+    _SITE_URL="${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}"
+    _API_EXTERNAL_URL="${_SITE_URL}/supabase"
+    _VITE_SUPABASE_URL="${_API_EXTERNAL_URL}"
+    _SITE_HOSTNAME="${DEPLOY_DOMAIN}"
 }
 
 show_summary() {
     header "Zusammenfassung"
-    echo -e "  ${BOLD}Umgebung:${NC}    ${ENV_TARGET}"
-    echo -e "  ${BOLD}Domain:${NC}      ${DEPLOY_DOMAIN}"
-    echo -e "  ${BOLD}Protokoll:${NC}   ${DEPLOY_PROTOCOL}"
-    echo -e "  ${BOLD}Supabase:${NC}    ${DEPLOY_SUPABASE_URL}"
-    echo -e "  ${BOLD}Git:${NC}         ${DEPLOY_GIT_REMOTE} (${DEPLOY_GIT_BRANCH})"
-    echo -e "  ${BOLD}App-Port:${NC}    ${APP_PORT}"
-    echo -e "  ${BOLD}Ziel:${NC}        ${DIR_APP}"
+    echo -e "  ${BOLD}Umgebung:${NC}         ${ENV_TARGET}"
+    echo -e "  ${BOLD}Domain:${NC}           ${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}"
+    echo -e "  ${BOLD}API (Kong):${NC}       ${_API_EXTERNAL_URL}"
+    echo -e "  ${BOLD}Git:${NC}              ${DEPLOY_GIT_REMOTE} (${DEPLOY_GIT_BRANCH})"
+    echo ""
+    echo -e "  ${BOLD}Ports (127.0.0.1 only):${NC}"
+    printf "    %-26s %s\n" "App:" "$DEPLOY_APP_PORT"
+    printf "    %-26s %s\n" "Kong (API):" "$DEPLOY_API_PORT"
+    printf "    %-26s %s\n" "PostgreSQL:" "$DEPLOY_DB_PORT"
+    printf "    %-26s %s\n" "Studio (SSH):" "$DEPLOY_STUDIO_PORT"
+    echo ""
+    printf "    %-26s %s\n" "Container-Prefix:" "$DEPLOY_COMPOSE_PROJECT"
+    echo ""
+    printf "    %-26s %s\n" "SMTP:" "$([ -n "$SMTP_HOST" ] && echo "${SMTP_HOST}:${SMTP_PORT}" || echo "(nicht konfiguriert)")"
     echo ""
     confirm "Korrekt? Setup starten?" "j" || exit 0
 }
 
 write_env_file() {
-    local env_file="${DIR_APP}/.env.${ENV_TARGET}"
-    cat > "$env_file" << ENVFILE
-# ${PROJECT_DISPLAY} – ${ENV_TARGET}
-# Generiert von deploy.sh am $(date '+%Y-%m-%d %H:%M')
-VITE_SUPABASE_URL=${DEPLOY_SUPABASE_URL}
-VITE_SUPABASE_ANON_KEY=${DEPLOY_SUPABASE_ANON_KEY}
-ENVFILE
-    chmod 600 "$env_file"
-    log "Env-Datei geschrieben: ${env_file}"
+    # Haupt-Secrets-Datei (600 – nur root/deploy-user lesbar)
+    local secrets_file="${DIR_BASE}/secrets.env"
+    cat > "$secrets_file" << SECRETSENV
+# ${PROJECT_DISPLAY} – Supabase-Schlüssel
+# Generiert am $(date '+%Y-%m-%d %H:%M') – NIEMALS committen!
+# Wird von docker/docker-compose.yml über --env-file eingelesen.
+COMPOSE_PROJECT_NAME=${DEPLOY_COMPOSE_PROJECT}
 
-    # deploy.env für spätere --update / --status Aufrufe
+# Supabase-Schlüssel
+JWT_SECRET=${DEPLOY_JWT_SECRET}
+POSTGRES_PASSWORD=${DEPLOY_POSTGRES_PASSWORD}
+ANON_KEY=${DEPLOY_ANON_KEY}
+SERVICE_ROLE_KEY=${DEPLOY_SERVICE_ROLE_KEY}
+PG_META_CRYPTO_KEY=${DEPLOY_PG_META_CRYPTO_KEY}
+
+# Ports (alle 127.0.0.1)
+APP_PORT=${DEPLOY_APP_PORT}
+API_PORT=${DEPLOY_API_PORT}
+DB_PORT=${DEPLOY_DB_PORT}
+STUDIO_PORT=${DEPLOY_STUDIO_PORT}
+
+# URLs (automatisch aus Domain berechnet)
+SITE_URL=${_SITE_URL}
+SITE_HOSTNAME=${_SITE_HOSTNAME}
+API_EXTERNAL_URL=${_API_EXTERNAL_URL}
+VITE_SUPABASE_URL=${_VITE_SUPABASE_URL}
+
+# Build
+BUILD_MODE=${ENV_TARGET}
+
+# Edge Functions
+DATA_TRANSFER_PASSWORD=${DEPLOY_DATA_TRANSFER_PASSWORD}
+ALLOWED_ORIGIN=${_SITE_URL}
+
+# SMTP (leer = keine E-Mails)
+SMTP_HOST=${SMTP_HOST}
+SMTP_PORT=${SMTP_PORT}
+SMTP_USER=${SMTP_USER}
+SMTP_PASS=${SMTP_PASS}
+SMTP_ADMIN_EMAIL=${SMTP_ADMIN_EMAIL}
+SMTP_SENDER_NAME=${SMTP_SENDER_NAME}
+SECRETSENV
+    chmod 600 "$secrets_file"
+    log "Secrets gespeichert: ${secrets_file}"
+
+    # deploy.env.ENV für spätere --update / --status Aufrufe
     local deploy_env="${DIR_BASE}/deploy.env.${ENV_TARGET}"
     cat > "$deploy_env" << DEPLOYENV
 # Deploy-Metadaten – ${ENV_TARGET}
 DIR_APP=${DIR_APP}
 DIR_DATA=${DIR_DATA}
 DIR_CONFIGS=${DIR_CONFIGS}
-DEPLOY_DOMAIN=${DEPLOY_DOMAIN}
-DEPLOY_PROTOCOL=${DEPLOY_PROTOCOL}
-DEPLOY_SUPABASE_URL=${DEPLOY_SUPABASE_URL}
-DEPLOY_GIT_REMOTE=${DEPLOY_GIT_REMOTE}
-DEPLOY_GIT_BRANCH=${DEPLOY_GIT_BRANCH}
 DEPLOYENV
     chmod 600 "$deploy_env"
-    log "Deploy-Env geschrieben: ${deploy_env}"
 }
 
 wait_for_health() {
-    info "Warte auf Health-Check (max 60s)..."
-    local DC="$1" compose_file="$2"
+    info "Warte auf Health-Check (max 120s)..."
+    local DC="$1" compose_file="$2" env_file="$3"
     local i=0
-    while [ $i -lt 60 ]; do
-        if $DC -f "$compose_file" ps --format '{{.Status}}' 2>/dev/null | grep -qi "healthy\|running"; then
-            log "Container läuft"
+    while [ $i -lt 120 ]; do
+        local healthy running
+        healthy=$($DC --env-file "$env_file" -f "$compose_file" ps 2>/dev/null | grep -c "healthy" || true)
+        running=$($DC --env-file "$env_file" -f "$compose_file" ps 2>/dev/null | grep -c "Up" || true)
+        if [ "${healthy:-0}" -ge 2 ] || [ "${running:-0}" -ge 4 ]; then
+            log "Stack gestartet (${running} Container laufen)"
             return 0
         fi
-        sleep 2
-        i=$((i + 2))
+        sleep 3
+        i=$((i + 3))
+        printf "."
     done
-    warn "Health-Check Timeout – Container-Status prüfen: docker ps"
+    echo ""
+    warn "Timeout – Status prüfen: bash scripts/deploy.sh --status --env ${ENV_TARGET}"
 }
 
 generate_caddy_snippet() {
     local snippet_file="${DIR_CONFIGS}/caddy-snippet.conf"
+    mkdir -p "$DIR_CONFIGS"
     cat > "$snippet_file" << CADDY
 # ${PROJECT_DISPLAY} – ${ENV_TARGET}
-# In /etc/caddy/Caddyfile einfügen: sudo systemctl reload caddy
+# ─────────────────────────────────────────────────────────────
+# Einfügen in /etc/caddy/Caddyfile  ODER  als eigene Datei:
+#   sudo cp ${snippet_file} /etc/caddy/conf.d/${PROJECT_NAME}-${ENV_TARGET}.conf
+#   sudo systemctl reload caddy
+#
+# Routing:
+#   DOMAIN              → App (statische Dateien, serve)
+#   DOMAIN/supabase/*   → Kong (Supabase API-Gateway)
+#   DOMAIN/supabase     → Kong
+# ─────────────────────────────────────────────────────────────
 
 ${DEPLOY_DOMAIN} {
-    reverse_proxy 127.0.0.1:${APP_PORT}
+
+    # ── Supabase API (Kong) – Pfad-Routing ──────────────────────
+    # /supabase/* wird an Kong weitergeleitet.
+    # Der Präfix /supabase wird vor der Weiterleitung entfernt.
+    handle_path /supabase/* {
+        reverse_proxy 127.0.0.1:${DEPLOY_API_PORT}
+    }
+
+    # ── App (Vite SPA – statische Dateien) ──────────────────────
+    handle {
+        reverse_proxy 127.0.0.1:${DEPLOY_APP_PORT}
+    }
+
+    # ── Logs ────────────────────────────────────────────────────
     log {
-        output file /var/log/${PROJECT_NAME}/caddy-access.log
+        output file /var/log/${PROJECT_NAME}/caddy-${ENV_TARGET}.log
+        format json
     }
 }
 CADDY
@@ -542,6 +974,9 @@ setup_server() {
     done
     log "Verzeichnisse erstellt: ${DIR_BASE}/"
 
+    # Log-Verzeichnis für Caddy
+    sudo mkdir -p "/var/log/${PROJECT_NAME}" 2>/dev/null || mkdir -p "${DIR_LOGS}"
+
     # Repo: Bereits geklontes Repo nutzen oder neu klonen
     local SCRIPT_DIR; SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local SCRIPT_REPO_ROOT; SCRIPT_REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -552,35 +987,35 @@ setup_server() {
         git -C "$DIR_APP" checkout "$DEPLOY_GIT_BRANCH"
         git -C "$DIR_APP" pull origin "$DEPLOY_GIT_BRANCH"
     elif [ -d "${SCRIPT_REPO_ROOT}/.git" ] && [ "$SCRIPT_REPO_ROOT" != "$DIR_APP" ]; then
-        info "Repo erkannt unter ${SCRIPT_REPO_ROOT} – verlinke..."
+        info "Repo vom aktuellen Verzeichnis verlinken..."
         ln -sfn "$SCRIPT_REPO_ROOT" "$DIR_APP"
-        git -C "$DIR_APP" fetch origin
         git -C "$DIR_APP" pull origin "$DEPLOY_GIT_BRANCH" 2>/dev/null || true
     else
-        info "Klone Repo..."
-        git clone --branch "$DEPLOY_GIT_BRANCH" "$DEPLOY_GIT_REMOTE" "$DIR_APP"
+        info "Klone Repo: ${DEPLOY_GIT_REMOTE}..."
+        git clone --branch "$DEPLOY_GIT_BRANCH" "$DEPLOY_GIT_REMOTE" "$DIR_APP" \
+            || { err "git clone fehlgeschlagen – SSH-Key vorhanden?"; exit 1; }
     fi
-    log "Repo: $(git -C "$DIR_APP" rev-parse --short HEAD)"
+    log "Repo: $(git -C "$DIR_APP" rev-parse --short HEAD 2>/dev/null || echo 'unbekannt')"
 
-    # Env-Datei schreiben
+    # Env-Datei schreiben (enthält alle Secrets)
     write_env_file
 
-    # Container bauen und starten (Compose aus dem Repo – context bleibt korrekt)
-    local DC; DC=$(detect_compose)
-    local COMPOSE_FILE="${DIR_APP}/scripts/docker-compose.yml"
-    [ -z "$DC" ] && { err "Docker Compose nicht gefunden"; exit 1; }
-
-    info "Baue und starte Container..."
-    BUILD_MODE="$ENV_TARGET" \
-    VITE_SUPABASE_URL="$DEPLOY_SUPABASE_URL" \
-    VITE_SUPABASE_ANON_KEY="$DEPLOY_SUPABASE_ANON_KEY" \
-    APP_PORT="$APP_PORT" \
-        $DC -f "$COMPOSE_FILE" up -d --build
-
-    wait_for_health "$DC" "$COMPOSE_FILE"
-
-    # Caddy-Snippet generieren
+    # Caddy-Snippet generieren (vor Container-Start)
     generate_caddy_snippet
+
+    # Container bauen und starten
+    local DC; DC=$(detect_compose)
+    local COMPOSE_FILE="${DIR_APP}/docker/docker-compose.yml"
+    local SECRETS_FILE="${DIR_BASE}/secrets.env"
+    [ -z "$DC" ] && { err "Docker Compose nicht gefunden"; exit 1; }
+    [ ! -f "$COMPOSE_FILE" ] && { err "docker/docker-compose.yml nicht gefunden unter ${DIR_APP}"; exit 1; }
+    [ ! -f "$SECRETS_FILE" ] && { err "secrets.env nicht gefunden – Setup fehlgeschlagen"; exit 1; }
+
+    info "Baue und starte Stack (${DEPLOY_COMPOSE_PROJECT})..."
+    $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build \
+        || { err "docker compose up fehlgeschlagen"; exit 1; }
+
+    wait_for_health "$DC" "$COMPOSE_FILE" "$SECRETS_FILE"
 
     # Zeitstempel speichern
     date '+%Y-%m-%d %H:%M:%S' > "${DIR_BASE}/.last-deploy"
@@ -590,24 +1025,42 @@ setup_server() {
     echo -e "${BOLD}${GREEN}║   Deployment abgeschlossen!                          ║${NC}"
     echo -e "${BOLD}${GREEN}╚═══════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "  ${BOLD}App:${NC}           ${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}"
-    echo -e "  ${BOLD}Umgebung:${NC}      ${ENV_TARGET}"
-    echo -e "  ${BOLD}Container:${NC}     docker ps | grep ${PROJECT_NAME}"
+    echo -e "  ${BOLD}App:${NC}       ${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}"
+    echo -e "  ${BOLD}API:${NC}       ${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}/supabase"
+    echo -e "  ${BOLD}Studio:${NC}    127.0.0.1:${DEPLOY_STUDIO_PORT}  (SSH-Tunnel nötig)"
     echo ""
     echo -e "  ${BOLD}Nächste Schritte:${NC}"
-    echo "    1. Caddy-Snippet einfügen: ${DIR_CONFIGS}/caddy-snippet.conf"
-    echo "       sudo cp ${DIR_CONFIGS}/caddy-snippet.conf /etc/caddy/conf.d/${PROJECT_NAME}.conf"
+    echo "    1. Caddy-Snippet einbinden:"
+    echo "       sudo cp ${DIR_CONFIGS}/caddy-snippet.conf /etc/caddy/conf.d/${PROJECT_NAME}-${ENV_TARGET}.conf"
     echo "       sudo systemctl reload caddy"
-    echo "    2. Status prüfen: bash scripts/deploy.sh --status --env ${ENV_TARGET}"
-    echo "    3. Logs:          bash scripts/deploy.sh --logs --env ${ENV_TARGET}"
+    echo ""
+    echo "    2. Studio via SSH-Tunnel:"
+    echo "       ssh -L ${DEPLOY_STUDIO_PORT}:127.0.0.1:${DEPLOY_STUDIO_PORT} user@server"
+    echo "       Browser: http://localhost:${DEPLOY_STUDIO_PORT}"
+    echo ""
+    echo "    3. Status: bash scripts/deploy.sh --status --env ${ENV_TARGET}"
+    echo "    4. Logs:   bash scripts/deploy.sh --logs --env ${ENV_TARGET}"
+    echo ""
+    echo -e "  ${DIM}Schlüssel gespeichert in: ${DIR_BASE}/secrets.env  (chmod 600)${NC}"
     echo ""
 }
 
-# ─── Hilfsfunktion: Compose-Pfad ermitteln ──────────────────────
+# ─── Hilfsfunktion: Compose-Pfad und Secrets ermitteln ──────────
 get_compose_file() {
     load_or_init_dirs
-    local cf="${DIR_APP}/scripts/docker-compose.yml"
+    # Neuer Pfad: docker/docker-compose.yml (self-hosted Supabase)
+    local cf="${DIR_APP}/docker/docker-compose.yml"
     [ -f "$cf" ] && { echo "$cf"; return 0; }
+    # Fallback: alter Pfad (app-only)
+    local cf_old="${DIR_APP}/scripts/docker-compose.yml"
+    [ -f "$cf_old" ] && { echo "$cf_old"; return 0; }
+    echo ""
+    return 1
+}
+
+get_secrets_file() {
+    local sf="${DIR_BASE}/secrets.env"
+    [ -f "$sf" ] && { echo "$sf"; return 0; }
     echo ""
     return 1
 }
@@ -616,30 +1069,30 @@ get_compose_file() {
 do_status() {
     header "Status – ${PROJECT_DISPLAY} (${ENV_TARGET})"
 
-    # Lokal: Supabase + Docker prüfen
-    if [ -d .git ] && [ -f supabase/config.toml ]; then
+    # Lokal: Docker-Stack prüfen
+    if [ -d .git ] && [ -f docker/docker-compose.local.yml ]; then
         info "Lokale Umgebung erkannt"
-        if command -v supabase >/dev/null 2>&1; then
-            echo ""
-            supabase status 2>/dev/null || info "Supabase nicht gestartet"
-        fi
+        local proj="${COMPOSE_PROJECT_NAME:-ameise-local}"
         echo ""
-        info "Docker-Container (${PROJECT_NAME}):"
-        docker ps --filter "name=supabase" --filter "name=masitcon" --format "  {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+        info "Docker-Container (${proj}):"
+        docker ps --filter "name=${proj}" --format "  {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
         return 0
     fi
 
     # Server: Compose-Status
     local cf; cf=$(get_compose_file)
+    local sf; sf=$(get_secrets_file)
     local DC; DC=$(detect_compose)
-    if [ -n "$cf" ]; then
-        $DC -f "$cf" ps
+    if [ -n "$cf" ] && [ -n "$sf" ]; then
+        $DC --env-file "$sf" -f "$cf" ps
         echo ""
         if [ -f "${DIR_BASE}/.last-deploy" ]; then
             info "Letzter Deploy: $(cat "${DIR_BASE}/.last-deploy")"
         fi
         info "Docker Volumes:"
         docker system df -v 2>/dev/null | grep -E "(VOLUME|${PROJECT_NAME})" | head -10 || true
+    elif [ -n "$cf" ]; then
+        $DC -f "$cf" ps
     else
         info "Kein Server-Setup gefunden"
         info "Nutze --local für lokale Entwicklung oder starte Server-Setup ohne Flags"
@@ -648,8 +1101,11 @@ do_status() {
 
 do_logs() {
     local cf; cf=$(get_compose_file)
+    local sf; sf=$(get_secrets_file)
     local DC; DC=$(detect_compose)
-    if [ -n "$cf" ]; then
+    if [ -n "$cf" ] && [ -n "$sf" ]; then
+        $DC --env-file "$sf" -f "$cf" logs -f ${SHOW_LOGS_SERVICE:+$SHOW_LOGS_SERVICE}
+    elif [ -n "$cf" ]; then
         $DC -f "$cf" logs -f ${SHOW_LOGS_SERVICE:+$SHOW_LOGS_SERVICE}
     else
         err "Kein docker-compose.yml gefunden"
@@ -660,8 +1116,12 @@ do_logs() {
 do_stop() {
     header "Stoppen – ${PROJECT_DISPLAY}"
     local cf; cf=$(get_compose_file)
+    local sf; sf=$(get_secrets_file)
     local DC; DC=$(detect_compose)
-    if [ -n "$cf" ]; then
+    if [ -n "$cf" ] && [ -n "$sf" ]; then
+        $DC --env-file "$sf" -f "$cf" stop
+        log "Container gestoppt"
+    elif [ -n "$cf" ]; then
         $DC -f "$cf" stop
         log "Container gestoppt"
     else
@@ -672,8 +1132,12 @@ do_stop() {
 do_restart() {
     header "Neu starten – ${PROJECT_DISPLAY}"
     local cf; cf=$(get_compose_file)
+    local sf; sf=$(get_secrets_file)
     local DC; DC=$(detect_compose)
-    if [ -n "$cf" ]; then
+    if [ -n "$cf" ] && [ -n "$sf" ]; then
+        $DC --env-file "$sf" -f "$cf" restart
+        log "Container neu gestartet"
+    elif [ -n "$cf" ]; then
         $DC -f "$cf" restart
         log "Container neu gestartet"
     else
@@ -685,39 +1149,34 @@ do_update() {
     header "Update – ${PROJECT_DISPLAY} (${ENV_TARGET})"
     load_or_init_dirs
 
-    if [ ! -d "${DIR_APP}/.git" ]; then
+    if [ ! -d "${DIR_APP}/.git" ] && [ ! -L "${DIR_APP}" ]; then
         err "Kein Repo unter ${DIR_APP} – zuerst Server-Setup ausführen"
         info "bash scripts/deploy.sh --env ${ENV_TARGET}"
         exit 1
     fi
 
     local DC; DC=$(detect_compose)
-    local COMPOSE_FILE="${DIR_APP}/scripts/docker-compose.yml"
+    local COMPOSE_FILE="${DIR_APP}/docker/docker-compose.yml"
+    local SECRETS_FILE="${DIR_BASE}/secrets.env"
     [ -z "$DC" ] && { err "Docker Compose nicht gefunden"; exit 1; }
-    [ ! -f "$COMPOSE_FILE" ] && { err "Kein docker-compose.yml – zuerst Server-Setup ausführen"; exit 1; }
+    [ ! -f "$COMPOSE_FILE" ] && { err "docker/docker-compose.yml nicht gefunden"; exit 1; }
+    [ ! -f "$SECRETS_FILE" ] && { err "secrets.env nicht gefunden – zuerst Server-Setup ausführen"; exit 1; }
 
     # Git pull
     info "Ziehe neuesten Stand..."
     git -C "$DIR_APP" fetch origin
-    git -C "$DIR_APP" pull origin "$(git -C "$DIR_APP" rev-parse --abbrev-ref HEAD)"
-    log "Repo aktualisiert: $(git -C "$DIR_APP" rev-parse --short HEAD)"
+    git -C "$DIR_APP" pull origin "$(git -C "$DIR_APP" rev-parse --abbrev-ref HEAD 2>/dev/null || echo master)"
+    log "Repo aktualisiert: $(git -C "$DIR_APP" rev-parse --short HEAD 2>/dev/null)"
 
-    # Env-Variablen laden (für Build-Args)
-    local env_file="${DIR_APP}/.env.${ENV_TARGET}"
-    if [ -f "$env_file" ]; then
-        # shellcheck source=/dev/null
-        source "$env_file"
-    fi
+    # App-Container neu bauen (VITE_* aus secrets.env)
+    info "Baue App-Container neu (VITE_SUPABASE_URL wird neu eingebettet)..."
+    $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build app \
+        || { err "docker compose up fehlgeschlagen"; exit 1; }
 
-    # Container neu bauen und starten
-    info "Baue Container neu..."
-    BUILD_MODE="$ENV_TARGET" \
-    VITE_SUPABASE_URL="${VITE_SUPABASE_URL:-}" \
-    VITE_SUPABASE_ANON_KEY="${VITE_SUPABASE_ANON_KEY:-}" \
-    APP_PORT="${APP_PORT}" \
-        $DC -f "$COMPOSE_FILE" up -d --build
+    # Andere Container nur neu starten (nicht neu bauen)
+    $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d
 
-    wait_for_health "$DC" "$COMPOSE_FILE"
+    wait_for_health "$DC" "$COMPOSE_FILE" "$SECRETS_FILE"
 
     date '+%Y-%m-%d %H:%M:%S' > "${DIR_BASE}/.last-deploy"
     log "Update abgeschlossen"
@@ -728,11 +1187,12 @@ do_clean() {
     load_or_init_dirs
 
     # Lokal
-    if [ -d .git ] && [ -f supabase/config.toml ]; then
+    if [ -d .git ] && [ -f docker/docker-compose.local.yml ]; then
         warn "Lokale Umgebung erkannt"
-        if confirm "Supabase stoppen und lokale .env löschen?" "n"; then
-            supabase stop 2>/dev/null || true
-            rm -f .env supabase/.env
+        local DC; DC=$(detect_compose)
+        if confirm "Docker-Stack stoppen und lokale .env löschen?" "n"; then
+            $DC -f docker/docker-compose.local.yml --env-file "$LOCAL_ENV_FILE" down 2>/dev/null || true
+            rm -f .env
             log "Lokale Umgebung bereinigt"
         fi
         return 0
@@ -740,20 +1200,28 @@ do_clean() {
 
     # Server
     local cf; cf=$(get_compose_file)
+    local sf; sf=$(get_secrets_file)
     local DC; DC=$(detect_compose)
     if [ -n "$cf" ]; then
-        warn "Dies entfernt alle Container und Volumes für ${ENV_TARGET}!"
+        warn "Dies entfernt ALLE Container und Docker-Volumes für ${ENV_TARGET}!"
+        warn "Datenbankinhalte gehen verloren!"
         confirm "Wirklich fortfahren?" "n" || return 0
         confirm "LETZTE WARNUNG – alle Daten in ${ENV_TARGET} gehen verloren. Sicher?" "n" || return 0
 
-        $DC -f "$cf" down -v
+        if [ -n "$sf" ]; then
+            $DC --env-file "$sf" -f "$cf" down -v
+        else
+            $DC -f "$cf" down -v
+        fi
         log "Container und Volumes entfernt"
 
         if [ "$CLEAN_FULL" = true ]; then
             warn "Lösche ${DIR_BASE}/${ENV_TARGET}/ komplett..."
             rm -rf "${DIR_BASE:?}/${ENV_TARGET}"
             rm -f "${DIR_BASE}/deploy.env.${ENV_TARGET}"
-            log "Verzeichnisse gelöscht"
+            rm -f "${DIR_BASE}/secrets.env"
+            rm -f "${DIR_BASE}/config.env"
+            log "Verzeichnisse und Konfiguration gelöscht"
         fi
     else
         info "Kein Server-Setup gefunden für ${ENV_TARGET}"
@@ -771,26 +1239,93 @@ do_prune() {
 }
 
 do_check_ports() {
-    check_ports_before_supabase
+    check_local_ports
     echo ""
     log "Port-Check abgeschlossen"
 }
 
 do_migrate() {
     header "Migrationen"
-    check_supabase_cli
-    check_ports_before_supabase
-    supabase db reset 2>/dev/null && log "Migrationen ausgeführt" || err "Migrationen fehlgeschlagen"
+
+    # Lokal: Migrationen laufen automatisch beim Stack-Start
+    if [ -d .git ] && [ -f docker/docker-compose.local.yml ]; then
+        info "Lokale Migrationen werden beim Stack-Start automatisch angewendet."
+        info "Vollständiges Reset (alle Daten löschen + Migrationen neu anwenden):"
+        info "  docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local down -v"
+        info "  docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local up -d"
+        return 0
+    fi
+
+    # Server: Migrationen direkt im DB-Container ausführen
+    load_or_init_dirs
+    local sf; sf=$(get_secrets_file)
+    [ -z "$sf" ] && { err "secrets.env nicht gefunden – zuerst Server-Setup ausführen"; exit 1; }
+    # shellcheck source=/dev/null
+    source "$sf"
+
+    local container="${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}-db"
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
+        err "DB-Container '${container}' läuft nicht"
+        info "Stack starten: bash scripts/deploy.sh --update --env ${ENV_TARGET}"
+        exit 1
+    fi
+
+    info "Führe Migrationen im Container '${container}' aus..."
+    local migrations_dir="${DIR_APP}/supabase/migrations"
+    local applied=0
+
+    for f in $(ls "${migrations_dir}"/*.sql 2>/dev/null | sort); do
+        local version; version=$(basename "$f")
+        local already; already=$(docker exec "$container" psql -U postgres -d postgres -tAc \
+            "SELECT 1 FROM public._applied_migrations WHERE version = '${version}'" 2>/dev/null || echo "")
+        if [ "$already" = "1" ]; then
+            info "  SKIP: ${version}"
+            continue
+        fi
+        info "  APPLY: ${version}"
+        docker exec -i "$container" psql -v ON_ERROR_STOP=0 -U postgres -d postgres < "$f" > /dev/null 2>&1
+        docker exec "$container" psql -U postgres -d postgres -c \
+            "INSERT INTO public._applied_migrations (version) VALUES ('${version}') ON CONFLICT DO NOTHING;" \
+            > /dev/null 2>&1
+        applied=$((applied + 1))
+    done
+
+    log "Migrationen abgeschlossen: ${applied} neu angewendet"
 }
 
 do_backup() {
     header "Backup"
-    check_supabase_cli
     local ts; ts=$(date +%Y%m%d-%H%M%S)
-    mkdir -p supabase/backups
-    supabase db dump -f "supabase/backups/dump-${ts}.sql" 2>/dev/null \
-        && log "Backup: supabase/backups/dump-${ts}.sql" \
-        || err "Backup fehlgeschlagen (supabase start ausgeführt?)"
+
+    # Lokal
+    if [ -d .git ] && [ -f docker/docker-compose.local.yml ]; then
+        local proj="${COMPOSE_PROJECT_NAME:-ameise-local}"
+        local container="${proj}-db"
+        mkdir -p backups
+        docker exec "$container" pg_dump -U postgres -d postgres \
+            > "backups/dump-${ts}.sql" \
+            && log "Backup: backups/dump-${ts}.sql" \
+            || err "Backup fehlgeschlagen (Stack läuft? docker ps | grep ${proj})"
+        return 0
+    fi
+
+    # Server
+    load_or_init_dirs
+    local sf; sf=$(get_secrets_file)
+    [ -z "$sf" ] && { err "secrets.env nicht gefunden – zuerst Server-Setup ausführen"; exit 1; }
+    # shellcheck source=/dev/null
+    source "$sf"
+    local container="${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-production}-db"
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
+        err "DB-Container '${container}' läuft nicht"
+        info "Stack starten: bash scripts/deploy.sh --update --env ${ENV_TARGET}"
+        exit 1
+    fi
+    mkdir -p "$DIR_BACKUPS"
+    docker exec "$container" pg_dump -U postgres -d postgres \
+        > "${DIR_BACKUPS}/dump-${ts}.sql" \
+        && log "Backup: ${DIR_BACKUPS}/dump-${ts}.sql" \
+        || err "Backup fehlgeschlagen"
 }
 
 # ═══════════════════════════════════════════════════════════════
