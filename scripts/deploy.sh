@@ -161,7 +161,7 @@ Modi:
 
 Optionen:
   --env production|staging    Ziel-Umgebung (Default: production)
-  --base-dir /pfad            Basisverzeichnis für Installation (Default: /opt/projects/masitcon-tools-ameise)
+  --base-dir /pfad            Basisverzeichnis für Installation (Default: /opt/masitcon/ameise)
   --service NAME              Für --logs: nur diesen Container
   --help                      Diese Hilfe
 HELP
@@ -171,8 +171,8 @@ HELP
 done
 
 # ─── Ordnerstruktur ──────────────────────────────────────────────
-# Standard: /opt/projects/${PROJECT_NAME} – überschreibbar per --base-dir oder Wizard
-DIR_BASE="${CLI_BASE_DIR:-/opt/projects/${PROJECT_NAME}}"
+# Standard: /opt/masitcon/ameise – überschreibbar per --base-dir oder Wizard
+DIR_BASE="${CLI_BASE_DIR:-/opt/masitcon/ameise}"
 DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
 DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
 DIR_BACKUPS="${DIR_BASE}/backups"
@@ -700,7 +700,7 @@ _load_saved_config() {
 # Speichert nicht-sensible Konfiguration für Re-Runs
 _save_config() {
     local cfg="${DIR_BASE}/config.env"
-    # /opt/projects erfordert Root-Rechte – sudo mit Ownership-Transfer
+    # /opt/masitcon erfordert Root-Rechte – sudo mit Ownership-Transfer
     if ! mkdir -p "$DIR_BASE" 2>/dev/null; then
         info "Erstelle ${DIR_BASE} mit sudo..."
         sudo mkdir -p "$DIR_BASE"
@@ -754,7 +754,7 @@ collect_config() {
     # Nur abfragen wenn nicht per --base-dir CLI-Flag gesetzt
     if [ -z "$CLI_BASE_DIR" ]; then
         echo "  ${DIM}Verzeichnis auf dem Server, in dem alle Projektdaten gespeichert werden.${NC}"
-        echo "  ${DIM}Empfehlung: /opt/projects/${PROJECT_NAME}${NC}"
+        echo "  ${DIM}Empfehlung: /opt/masitcon/ameise${NC}"
         echo ""
         local new_base; new_base=$(ask "Installationsverzeichnis" "${DIR_BASE}")
         if [ -n "$new_base" ] && [ "$new_base" != "$DIR_BASE" ]; then
@@ -1208,7 +1208,7 @@ setup_server() {
     collect_config
     show_summary
 
-    # Verzeichnisse anlegen (ggf. sudo für /opt/projects)
+    # Verzeichnisse anlegen (ggf. sudo für /opt/masitcon)
     # WICHTIG: DIR_APP wird NICHT vorab angelegt – es wird später als Symlink
     #          oder git-Clone erstellt. Nur den Parent anlegen.
     if ! mkdir -p "$DIR_BASE" 2>/dev/null; then
