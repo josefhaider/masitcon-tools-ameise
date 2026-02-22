@@ -290,3 +290,11 @@ volumes:
     name: ${COMPOSE_PROJECT_NAME}-db-config
   storage-data:
     name: ${COMPOSE_PROJECT_NAME}-storage-data
+
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME}-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${DOCKER_SUBNET:-172.20.0.0/16}

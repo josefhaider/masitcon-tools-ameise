@@ -17,7 +17,7 @@
 # Aufräumen:       bash scripts/deploy.sh --prune
 # Nur Migrationen: bash scripts/deploy.sh --migrate
 # Backup:          bash scripts/deploy.sh --backup
-# Port-Check:      bash scripts/deploy.sh --check-ports (lokal)
+# Port-Check:      bash scripts/deploy.sh --check-ports
 #
 # ===================================================================
 set -uo pipefail
@@ -83,7 +83,8 @@ is_port_free() {
 }
 
 find_free_port() {
-    local port="$1" max=$((port + 200))
+    local port="$1"
+    local max=$((port + 200))
     while ! is_port_free "$port" && [ "$port" -lt "$max" ]; do port=$((port + 1)); done
     [ "$port" -ge "$max" ] && { echo ""; return 1; }
     echo "$port"
@@ -154,7 +155,7 @@ Modi:
   --clean            Projekt entfernen (Container + Volumes + Configs)
   --clean --full     Alles entfernen inkl. Verzeichnisse, Backups, Logs
   --prune            Docker-System aufräumen (ungenutzte Images/Volumes)
-  --check-ports      Lokale Ports prüfen – zeigt Belegung und mögliche Konflikte
+  --check-ports      Ports prüfen (Supabase) – zeigt Belegung, bietet Alternativen
 
 Optionen:
   --env production|staging    Ziel-Umgebung (Default: production)
@@ -228,6 +229,139 @@ check_prerequisites() {
     log "Docker    $(docker --version | cut -d' ' -f3 | tr -d ',')"
     log "Compose   verfügbar"
     log "Git       $(git --version | cut -d' ' -f3)"
+}
+
+check_supabase_cli() {
+    if ! command -v supabase >/dev/null 2>&1; then
+        err "Supabase CLI nicht gefunden"
+        info "Ubuntu/Debian:  sudo apt install supabase  (oder: https://supabase.com/docs/guides/cli)"
+        info "Mac:            brew install supabase/tap/supabase"
+        info "Alternativ:     npm install -g supabase"
+        exit 1
+    fi
+    log "Supabase CLI $(supabase --version 2>/dev/null || echo 'installiert')"
+}
+
+# ─── Port-Check vor Supabase (PFLICHT – mehrere Instanzen auf Server) ─
+# Liest Ports aus supabase/config.toml, zeigt Belegung, bietet freie Alternativen
+
+read_supabase_ports() {
+    local config="${1:-supabase/config.toml}"
+    [ ! -f "$config" ] && { echo "54331 54332 54333 54334 54337"; return; }
+    grep -E "^\s*port\s*=" "$config" 2>/dev/null | awk -F= '{gsub(/[^0-9]/,"",$2); if($2) print $2}' | sort -nu
+}
+
+# Zeigt welcher Prozess/Container einen Port belegt
+get_port_occupant() {
+    local port="$1"
+    # Docker-Container (häufigste Ursache bei mehreren Supabase-Instanzen)
+    if command -v docker >/dev/null 2>&1; then
+        local dc; dc=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E ":${port}(->|/|[^0-9]|$)" | head -1)
+        [ -n "$dc" ] && { echo "Docker: ${dc%% *}"; return; }
+    fi
+    # ss (Ubuntu/Linux – Standard)
+    if command -v ss >/dev/null 2>&1; then
+        local s; s=$(ss -tlnp 2>/dev/null | grep ":${port} ")
+        [ -n "$s" ] && { echo "Socket: $(echo "$s" | awk '{print $6}')"; return; }
+    fi
+    # lsof (Fallback, z.B. Mac)
+    if command -v lsof >/dev/null 2>&1; then
+        local l; l=$(lsof -iTCP:${port} -sTCP:LISTEN -nP 2>/dev/null | tail -1)
+        [ -n "$l" ] && { echo "Prozess: $(echo "$l" | awk '{print $1, $2}')"; return; }
+    fi
+    echo "unbekannt"
+}
+
+# Hauptfunktion: Prüft alle Supabase-Ports, blockiert bei Konflikt
+# Gibt 0 zurück wenn alle frei, 1 bei Konflikt (oder nach Abbruch)
+check_ports_before_supabase() {
+    header "Port-Check (Supabase)"
+    local ports
+    ports=($(read_supabase_ports))
+    [ ${#ports[@]} -eq 0 ] && ports=(54331 54332 54333 54334 54337)
+
+    local occupied=()
+    local details=()
+
+    for p in "${ports[@]}"; do
+        if is_port_free "$p"; then
+            log "Port $p: frei"
+        else
+            local occ; occ=$(get_port_occupant "$p")
+            occupied+=("$p")
+            details+=("  $p → $occ")
+        fi
+    done
+
+    if [ ${#occupied[@]} -gt 0 ]; then
+        echo ""
+        warn "Folgende Ports sind belegt:"
+        printf '%s\n' "${details[@]}"
+        echo ""
+        info "Alle laufenden Docker-Container:"
+        docker ps --format '  {{.Names}} ({{.Ports}})' 2>/dev/null | head -20 || true
+        echo ""
+        info "Alle Ports 543xx im Einsatz:"
+        (ss -tlnp 2>/dev/null || lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null) | grep -E ":54[0-9]{3}\s" | head -15 || true
+        echo ""
+
+        # Option: Freie Alternativ-Ports finden und config.toml anpassen
+        local base=54331
+        local free_ports=()
+        local i=0
+        while [ $i -le 100 ]; do
+            local candidate=$((base + i))
+            if is_port_free "$candidate"; then
+                free_ports+=("$candidate")
+                [ ${#free_ports[@]} -ge 5 ] && break
+            fi
+            i=$((i + 1))
+        done
+
+        if [ ${#free_ports[@]} -ge 5 ]; then
+            info "Freie Port-Block-Alternative gefunden: ${free_ports[*]}"
+            if confirm "supabase/config.toml mit diesen Ports aktualisieren?" "j"; then
+                _update_config_ports "${free_ports[@]}" && return 0
+            fi
+        fi
+
+        warn "Lösung: Andere Supabase-Instanz stoppen (supabase stop) oder Ports in supabase/config.toml anpassen."
+        confirm "Trotzdem fortfahren (Start wird wahrscheinlich fehlschlagen)?" "n" || exit 1
+    else
+        log "Alle Supabase-Ports frei"
+    fi
+}
+
+# Aktualisiert config.toml mit neuem Port-Block
+_update_config_ports() {
+    local api_port="${1:-54331}" db_port="${2:-54332}" studio_port="${3:-54333}" inbucket_port="${4:-54334}" analytics_port="${5:-54337}"
+    local config="supabase/config.toml"
+    [ ! -f "$config" ] && { err "config.toml nicht gefunden"; return 1; }
+
+    cp "$config" "${config}.bak"
+    local in_section=""
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^\[api\] ]]; then in_section="api"; fi
+        if [[ "$line" =~ ^\[db\] ]]; then in_section="db"; fi
+        if [[ "$line" =~ ^\[studio\] ]]; then in_section="studio"; fi
+        if [[ "$line" =~ ^\[inbucket\] ]]; then in_section="inbucket"; fi
+        if [[ "$line" =~ ^\[analytics\] ]]; then in_section="analytics"; fi
+        if [[ "$line" =~ ^[[:space:]]*port[[:space:]]*=[[:space:]]*[0-9]+ ]]; then
+            case "$in_section" in
+                api)      echo "port = ${api_port}" ;;
+                db)       echo "port = ${db_port}" ;;
+                studio)   echo "port = ${studio_port}" ;;
+                inbucket) echo "port = ${inbucket_port}" ;;
+                analytics) echo "port = ${analytics_port}" ;;
+                *)        echo "$line" ;;
+            esac
+        else
+            echo "$line"
+        fi
+    done < "$config" > "${config}.new" && mv "${config}.new" "$config"
+
+    log "config.toml aktualisiert: API=$api_port DB=$db_port Studio=$studio_port"
+    return 0
 }
 
 # ─── Lokal (Docker Compose) ──────────────────────────────────────
@@ -403,20 +537,13 @@ setup_local() {
     # Auf DB warten (Migrations werden beim ersten Start automatisch angewendet)
     wait_for_local_db
 
-    # PostgREST Schema-Cache neu laden (cached Schema beim Start vor Migrations-Ende)
-    local proj="${COMPOSE_PROJECT_NAME:-ameise-local}"
-    info "PostgREST Schema-Reload..."
-    sleep 3  # kurz warten bis PostgREST gestartet ist
-    docker exec "${proj}-db" psql -U postgres -d postgres -q \
-        -c "NOTIFY pgrst, 'reload schema';" 2>/dev/null || true
-    log "PostgREST Schema aktualisiert"
-
     # Env-Variablen neu laden (sicherstellen dass alle gesetzt sind)
     # shellcheck source=/dev/null
     source "$LOCAL_ENV_FILE"
     local anon_key="${ANON_KEY:-}"
     local service_key="${SERVICE_ROLE_KEY:-}"
     local api_port="${API_PORT:-8100}"
+    
     local studio_port="${STUDIO_PORT:-3101}"
     local db_port="${DB_PORT:-5433}"
     local inbucket_port="${INBUCKET_WEB_PORT:-9000}"
@@ -433,6 +560,18 @@ VITE_SUPABASE_ANON_KEY=${anon_key}
 DOTENV
     chmod 600 .env
     log ".env geschrieben (Vite)"
+
+    # supabase/.env für Edge Functions (supabase functions serve)
+    mkdir -p supabase
+    cat > supabase/.env << SBENV
+# ${PROJECT_DISPLAY} – Edge Functions (lokal)
+SUPABASE_URL=http://localhost:${api_port}
+SUPABASE_SERVICE_ROLE_KEY=${service_key}
+DATA_TRANSFER_PASSWORD=${data_transfer_pw}
+ALLOWED_ORIGIN=http://localhost:${APP_PORT}
+SBENV
+    chmod 600 supabase/.env
+    log "supabase/.env geschrieben (Edge Functions)"
 
     # npm install falls node_modules fehlt
     if [ ! -d "node_modules" ]; then
@@ -456,13 +595,12 @@ DOTENV
     printf "    %-30s %s\n" "Supabase Studio:"        "http://localhost:${studio_port}"
     printf "    %-30s %s\n" "Inbucket (E-Mails):"    "http://localhost:${inbucket_port}"
     printf "    %-30s %s\n" "PostgreSQL (direkt):"   "localhost:${db_port}"
-    printf "    %-30s %s\n" "Hono API (Functions):"  "http://localhost:${api_port}/functions/v1"
     echo ""
     echo -e "  ${BOLD}Weitere Befehle:${NC}"
     echo "    Stack stoppen:   docker compose -f docker/docker-compose.local.yml down"
     echo "    Stack neu:       docker compose -f docker/docker-compose.local.yml down -v"
     echo "    Stack-Logs:      docker compose -f docker/docker-compose.local.yml logs -f"
-    echo "    API-Logs:        docker compose -f docker/docker-compose.local.yml logs -f api"
+    echo "    Edge Functions:  supabase functions serve --env-file supabase/.env"
     echo ""
 
     # Optional: Cloud-Datenmigration anbieten
@@ -533,6 +671,7 @@ SMTP_USER=""
 SMTP_PASS=""
 SMTP_ADMIN_EMAIL=""
 SMTP_SENDER_NAME="Ameise"
+DEPLOY_DOCKER_SUBNET=""
 
 # Lädt gespeicherte Konfiguration (idempotenter Re-Run)
 _load_saved_config() {
@@ -548,7 +687,12 @@ _load_saved_config() {
 # Speichert nicht-sensible Konfiguration für Re-Runs
 _save_config() {
     local cfg="${DIR_BASE}/config.env"
-    mkdir -p "$DIR_BASE"
+    # /opt/projects erfordert Root-Rechte – sudo mit Ownership-Transfer
+    if ! mkdir -p "$DIR_BASE" 2>/dev/null; then
+        info "Erstelle ${DIR_BASE} mit sudo..."
+        sudo mkdir -p "$DIR_BASE"
+        sudo chown "$(id -u):$(id -g)" "$DIR_BASE"
+    fi
     cat > "$cfg" << SAVEDCFG
 # Gespeicherte Konfiguration – ${PROJECT_DISPLAY}
 # Automatisch von deploy.sh generiert – nicht manuell bearbeiten
@@ -566,6 +710,7 @@ SMTP_PORT=${SMTP_PORT}
 SMTP_USER=${SMTP_USER}
 SMTP_ADMIN_EMAIL=${SMTP_ADMIN_EMAIL}
 SMTP_SENDER_NAME=${SMTP_SENDER_NAME}
+DEPLOY_DOCKER_SUBNET=${DEPLOY_DOCKER_SUBNET}
 SAVEDCFG
     chmod 600 "$cfg"
 }
@@ -595,7 +740,7 @@ collect_config() {
     _load_saved_config
 
     # ── 1. Git ───────────────────────────────────────────────────
-    header "1/5  Git-Repository"
+    header "1/6  Git-Repository"
 
     local default_remote="${DEPLOY_GIT_REMOTE:-}"
     if [ -z "$default_remote" ] && git remote get-url origin >/dev/null 2>&1; then
@@ -605,7 +750,7 @@ collect_config() {
     DEPLOY_GIT_BRANCH=$(ask "Git Branch" "${DEPLOY_GIT_BRANCH:-master}")
 
     # ── 2. Domain & Protokoll ────────────────────────────────────
-    header "2/5  Domain"
+    header "2/6  Domain"
 
     echo "  ${DIM}Unter welcher Adresse ist die App im Browser erreichbar?${NC}"
     echo "  ${DIM}Beispiel: zeiterfassung.example.com${NC}"
@@ -635,7 +780,7 @@ collect_config() {
     log "API-URL:   ${API_EXTERNAL_URL}  (Kong via /supabase/*)"
 
     # ── 3. Supabase-Schlüssel ────────────────────────────────────
-    header "3/5  Supabase-Schlüssel"
+    header "3/6  Supabase-Schlüssel"
 
     echo "  ${DIM}Alle kryptografischen Schlüssel werden automatisch generiert.${NC}"
     echo "  ${DIM}Du kannst sie nach der Anzeige übernehmen oder manuell überschreiben.${NC}"
@@ -699,7 +844,7 @@ collect_config() {
     fi
 
     # ── 4. E-Mail / SMTP (optional) ─────────────────────────────
-    header "4/5  E-Mail (SMTP) – optional"
+    header "4/6  E-Mail (SMTP) – optional"
 
     echo "  ${DIM}Supabase Auth versendet E-Mails für Passwort-Reset und Einladungen.${NC}"
     echo "  ${DIM}Ohne SMTP funktioniert die App, aber E-Mails werden nicht zugestellt.${NC}"
@@ -752,7 +897,7 @@ collect_config() {
     fi
 
     # ── 5. Ports ─────────────────────────────────────────────────
-    header "5/5  Ports"
+    header "5/6  Ports"
 
     echo "  ${DIM}Ports werden automatisch gesucht. Alle binden an 127.0.0.1 –${NC}"
     echo "  ${DIM}kein Internetzugriff ohne Caddy.${NC}"
@@ -812,6 +957,21 @@ collect_config() {
     local default_cpn="${PROJECT_NAME}-${ENV_TARGET}"
     DEPLOY_COMPOSE_PROJECT=$(ask "Container-Prefix (COMPOSE_PROJECT_NAME)" "${DEPLOY_COMPOSE_PROJECT:-$default_cpn}")
 
+    # ── 6. Docker-Netzwerk ───────────────────────────────────────
+    header "6/6  Docker-Netzwerk"
+
+    echo "  ${DIM}Eigenes Subnetz für Docker-Container (vermeidet IP-Konflikte${NC}"
+    echo "  ${DIM}bei mehreren Stacks auf demselben Server).${NC}"
+    echo "  ${DIM}Beispiel: 172.21.0.0/16  oder  10.10.2.0/24${NC}"
+    echo ""
+
+    # Standard-Subnetz aus Umgebung ableiten (production=172.20, staging=172.21)
+    local default_subnet="172.20.0.0/16"
+    [ "$ENV_TARGET" = "staging" ] && default_subnet="172.21.0.0/16"
+    [ -n "${DEPLOY_DOCKER_SUBNET:-}" ] && default_subnet="$DEPLOY_DOCKER_SUBNET"
+
+    DEPLOY_DOCKER_SUBNET=$(ask "Docker-Subnetz (CIDR)" "$default_subnet")
+
     # Konfiguration speichern
     _save_config
     log "Konfiguration gespeichert: ${DIR_BASE}/config.env"
@@ -837,6 +997,7 @@ show_summary() {
     printf "    %-26s %s\n" "Studio (SSH):" "$DEPLOY_STUDIO_PORT"
     echo ""
     printf "    %-26s %s\n" "Container-Prefix:" "$DEPLOY_COMPOSE_PROJECT"
+    printf "    %-26s %s\n" "Docker-Subnetz:" "$DEPLOY_DOCKER_SUBNET"
     echo ""
     printf "    %-26s %s\n" "SMTP:" "$([ -n "$SMTP_HOST" ] && echo "${SMTP_HOST}:${SMTP_PORT}" || echo "(nicht konfiguriert)")"
     echo ""
@@ -873,6 +1034,9 @@ VITE_SUPABASE_URL=${_VITE_SUPABASE_URL}
 
 # Build
 BUILD_MODE=${ENV_TARGET}
+
+# Docker-Netzwerk
+DOCKER_SUBNET=${DEPLOY_DOCKER_SUBNET}
 
 # Edge Functions
 DATA_TRANSFER_PASSWORD=${DEPLOY_DATA_TRANSFER_PASSWORD}
@@ -922,7 +1086,7 @@ wait_for_health() {
 
 generate_caddy_snippet() {
     local snippet_file="${DIR_CONFIGS}/caddy-snippet.conf"
-    mkdir -p "$DIR_CONFIGS"
+    mkdir -p "$DIR_CONFIGS" 2>/dev/null || { sudo mkdir -p "$DIR_CONFIGS"; sudo chown "$(id -u):$(id -g)" "$DIR_CONFIGS"; }
     cat > "$snippet_file" << CADDY
 # ${PROJECT_DISPLAY} – ${ENV_TARGET}
 # ─────────────────────────────────────────────────────────────
@@ -968,9 +1132,14 @@ setup_server() {
     collect_config
     show_summary
 
-    # Verzeichnisse anlegen
+    # Verzeichnisse anlegen (ggf. sudo für /opt/projects)
+    if ! mkdir -p "$DIR_BASE" 2>/dev/null; then
+        info "Erstelle Verzeichnisse mit sudo (Passwort kann abgefragt werden)..."
+        sudo mkdir -p "$DIR_BASE"
+        sudo chown "$(id -u):$(id -g)" "$DIR_BASE"
+    fi
     for d in "$DIR_APP" "$DIR_DATA" "$DIR_CONFIGS" "$DIR_BACKUPS" "$DIR_LOGS"; do
-        mkdir -p "$d"
+        mkdir -p "$d" 2>/dev/null || { sudo mkdir -p "$d"; sudo chown "$(id -u):$(id -g)" "$d"; }
     done
     log "Verzeichnisse erstellt: ${DIR_BASE}/"
 
@@ -1069,13 +1238,16 @@ get_secrets_file() {
 do_status() {
     header "Status – ${PROJECT_DISPLAY} (${ENV_TARGET})"
 
-    # Lokal: Docker-Stack prüfen
-    if [ -d .git ] && [ -f docker/docker-compose.local.yml ]; then
+    # Lokal: Supabase + Docker prüfen
+    if [ -d .git ] && [ -f supabase/config.toml ]; then
         info "Lokale Umgebung erkannt"
-        local proj="${COMPOSE_PROJECT_NAME:-ameise-local}"
+        if command -v supabase >/dev/null 2>&1; then
+            echo ""
+            supabase status 2>/dev/null || info "Supabase nicht gestartet"
+        fi
         echo ""
-        info "Docker-Container (${proj}):"
-        docker ps --filter "name=${proj}" --format "  {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+        info "Docker-Container (${PROJECT_NAME}):"
+        docker ps --filter "name=supabase" --filter "name=masitcon" --format "  {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
         return 0
     fi
 
@@ -1187,12 +1359,11 @@ do_clean() {
     load_or_init_dirs
 
     # Lokal
-    if [ -d .git ] && [ -f docker/docker-compose.local.yml ]; then
+    if [ -d .git ] && [ -f supabase/config.toml ]; then
         warn "Lokale Umgebung erkannt"
-        local DC; DC=$(detect_compose)
-        if confirm "Docker-Stack stoppen und lokale .env löschen?" "n"; then
-            $DC -f docker/docker-compose.local.yml --env-file "$LOCAL_ENV_FILE" down 2>/dev/null || true
-            rm -f .env
+        if confirm "Supabase stoppen und lokale .env löschen?" "n"; then
+            supabase stop 2>/dev/null || true
+            rm -f .env supabase/.env
             log "Lokale Umgebung bereinigt"
         fi
         return 0
@@ -1239,7 +1410,7 @@ do_prune() {
 }
 
 do_check_ports() {
-    check_local_ports
+    check_ports_before_supabase
     echo ""
     log "Port-Check abgeschlossen"
 }
@@ -1247,12 +1418,11 @@ do_check_ports() {
 do_migrate() {
     header "Migrationen"
 
-    # Lokal: Migrationen laufen automatisch beim Stack-Start
-    if [ -d .git ] && [ -f docker/docker-compose.local.yml ]; then
-        info "Lokale Migrationen werden beim Stack-Start automatisch angewendet."
-        info "Vollständiges Reset (alle Daten löschen + Migrationen neu anwenden):"
-        info "  docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local down -v"
-        info "  docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local up -d"
+    # Lokal: Supabase CLI
+    if [ -d .git ] && [ -f supabase/config.toml ]; then
+        check_supabase_cli
+        check_ports_before_supabase
+        supabase db reset 2>/dev/null && log "Migrationen ausgeführt (lokal)" || err "Migrationen fehlgeschlagen"
         return 0
     fi
 
@@ -1295,37 +1465,12 @@ do_migrate() {
 
 do_backup() {
     header "Backup"
+    check_supabase_cli
     local ts; ts=$(date +%Y%m%d-%H%M%S)
-
-    # Lokal
-    if [ -d .git ] && [ -f docker/docker-compose.local.yml ]; then
-        local proj="${COMPOSE_PROJECT_NAME:-ameise-local}"
-        local container="${proj}-db"
-        mkdir -p backups
-        docker exec "$container" pg_dump -U postgres -d postgres \
-            > "backups/dump-${ts}.sql" \
-            && log "Backup: backups/dump-${ts}.sql" \
-            || err "Backup fehlgeschlagen (Stack läuft? docker ps | grep ${proj})"
-        return 0
-    fi
-
-    # Server
-    load_or_init_dirs
-    local sf; sf=$(get_secrets_file)
-    [ -z "$sf" ] && { err "secrets.env nicht gefunden – zuerst Server-Setup ausführen"; exit 1; }
-    # shellcheck source=/dev/null
-    source "$sf"
-    local container="${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-production}-db"
-    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
-        err "DB-Container '${container}' läuft nicht"
-        info "Stack starten: bash scripts/deploy.sh --update --env ${ENV_TARGET}"
-        exit 1
-    fi
-    mkdir -p "$DIR_BACKUPS"
-    docker exec "$container" pg_dump -U postgres -d postgres \
-        > "${DIR_BACKUPS}/dump-${ts}.sql" \
-        && log "Backup: ${DIR_BACKUPS}/dump-${ts}.sql" \
-        || err "Backup fehlgeschlagen"
+    mkdir -p supabase/backups
+    supabase db dump -f "supabase/backups/dump-${ts}.sql" 2>/dev/null \
+        && log "Backup: supabase/backups/dump-${ts}.sql" \
+        || err "Backup fehlgeschlagen (supabase start ausgeführt?)"
 }
 
 # ═══════════════════════════════════════════════════════════════
