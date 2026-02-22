@@ -1423,6 +1423,10 @@ do_update() {
     git -C "$DIR_APP" pull origin "$(git -C "$DIR_APP" rev-parse --abbrev-ref HEAD 2>/dev/null || echo master)"
     log "Repo aktualisiert: $(git -C "$DIR_APP" rev-parse --short HEAD 2>/dev/null)"
 
+    # Neue Migrationen anwenden (vor Container-Neustart)
+    info "Prüfe und wende neue Datenbankmigrationen an..."
+    do_migrate || { err "Migrationen fehlgeschlagen – Update abgebrochen"; exit 1; }
+
     # App-Container neu bauen (VITE_* aus secrets.env)
     info "Baue App-Container neu (VITE_SUPABASE_URL wird neu eingebettet)..."
     $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build app \
@@ -1501,14 +1505,6 @@ do_check_ports() {
 do_migrate() {
     header "Migrationen"
 
-    # Lokal: Supabase CLI
-    if [ -d .git ] && [ -f supabase/config.toml ]; then
-        check_supabase_cli
-        check_ports_before_supabase
-        supabase db reset 2>/dev/null && log "Migrationen ausgeführt (lokal)" || err "Migrationen fehlgeschlagen"
-        return 0
-    fi
-
     # Server: Migrationen direkt im DB-Container ausführen
     load_or_init_dirs
     local sf; sf=$(get_secrets_file)
@@ -1523,27 +1519,64 @@ do_migrate() {
         exit 1
     fi
 
-    info "Führe Migrationen im Container '${container}' aus..."
-    local migrations_dir="${DIR_APP}/supabase/migrations"
-    local applied=0
+    # Migrations-Tracking-Tabelle sicherstellen (idempotent)
+    docker exec "$container" psql -U postgres -d postgres -c \
+        "CREATE TABLE IF NOT EXISTS public._applied_migrations (
+            version text PRIMARY KEY,
+            applied_at timestamptz DEFAULT now()
+         );" > /dev/null 2>&1 \
+        || { err "Konnte _applied_migrations Tabelle nicht erstellen"; exit 1; }
 
-    for f in $(ls "${migrations_dir}"/*.sql 2>/dev/null | sort); do
+    local migrations_dir="${DIR_APP}/supabase/migrations"
+    if [ ! -d "$migrations_dir" ]; then
+        err "Migrations-Verzeichnis nicht gefunden: ${migrations_dir}"
+        exit 1
+    fi
+
+    local sql_files; sql_files=$(ls "${migrations_dir}"/*.sql 2>/dev/null | sort)
+    if [ -z "$sql_files" ]; then
+        info "Keine SQL-Dateien in ${migrations_dir} gefunden"
+        return 0
+    fi
+
+    info "Führe Migrationen im Container '${container}' aus..."
+    local applied=0 skipped=0 failed=0
+
+    for f in $sql_files; do
         local version; version=$(basename "$f")
+
+        # Bereits angewendet?
         local already; already=$(docker exec "$container" psql -U postgres -d postgres -tAc \
             "SELECT 1 FROM public._applied_migrations WHERE version = '${version}'" 2>/dev/null || echo "")
         if [ "$already" = "1" ]; then
-            info "  SKIP: ${version}"
+            echo -e "  ${DIM}  SKIP  ${version}${NC}"
+            skipped=$((skipped + 1))
             continue
         fi
-        info "  APPLY: ${version}"
-        docker exec -i "$container" psql -v ON_ERROR_STOP=0 -U postgres -d postgres < "$f" > /dev/null 2>&1
-        docker exec "$container" psql -U postgres -d postgres -c \
-            "INSERT INTO public._applied_migrations (version) VALUES ('${version}') ON CONFLICT DO NOTHING;" \
-            > /dev/null 2>&1
-        applied=$((applied + 1))
+
+        echo -e "  ${CYAN}  APPLY ${NC}${version}"
+        # ON_ERROR_STOP=1: psql gibt Exit-Code != 0 bei SQL-Fehlern zurück
+        if docker exec -i "$container" psql -v ON_ERROR_STOP=1 -U postgres -d postgres < "$f"; then
+            docker exec "$container" psql -U postgres -d postgres -c \
+                "INSERT INTO public._applied_migrations (version) VALUES ('${version}') ON CONFLICT DO NOTHING;" \
+                > /dev/null 2>&1
+            echo -e "  ${GREEN}  ✓     ${version}${NC}"
+            applied=$((applied + 1))
+        else
+            echo -e "  ${RED}  ✗     ${version} – FEHLER (Migration nicht als angewendet markiert)${NC}"
+            failed=$((failed + 1))
+        fi
     done
 
-    log "Migrationen abgeschlossen: ${applied} neu angewendet"
+    echo ""
+    if [ "$failed" -gt 0 ]; then
+        err "Migrationen: ${applied} angewendet, ${skipped} übersprungen, ${failed} fehlgeschlagen"
+        info "Fehlerhafte Migration manuell prüfen:"
+        info "  docker exec -it ${container} psql -U postgres -d postgres"
+        return 1
+    else
+        log "Migrationen: ${applied} angewendet, ${skipped} übersprungen – alle erfolgreich"
+    fi
 }
 
 do_backup() {

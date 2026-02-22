@@ -4,7 +4,7 @@
 # ===================================================================
 # Wird als Teil von docker-entrypoint-initdb.d ausgefuehrt.
 # Laeuft NUR beim ersten Start (wenn das Data-Volume leer ist).
-# Fuer Updates nach git pull: apply-migrations.sh verwenden.
+# Fuer spaetere Updates: bash scripts/deploy.sh --migrate
 # ===================================================================
 
 set -e
@@ -17,7 +17,7 @@ if [ ! -d "$MIGRATIONS_DIR" ] || [ -z "$(ls -A "$MIGRATIONS_DIR"/*.sql 2>/dev/nu
 fi
 
 echo "init-migrations: Erstelle Migrations-Tracking-Tabelle..."
-psql -v ON_ERROR_STOP=0 -U postgres -d postgres <<'SQL'
+psql -v ON_ERROR_STOP=1 -U postgres -d postgres <<'SQL'
 CREATE TABLE IF NOT EXISTS public._applied_migrations (
     version text PRIMARY KEY,
     applied_at timestamptz DEFAULT now()
@@ -40,15 +40,22 @@ for f in $(ls "$MIGRATIONS_DIR"/*.sql 2>/dev/null | sort); do
     fi
 
     echo "  APPLY: $version"
-    if psql -v ON_ERROR_STOP=0 -U postgres -d postgres -f "$f" > /dev/null 2>&1; then
+    # ON_ERROR_STOP=1: nicht fortfahren wenn Migration fehlschlaegt
+    if psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f "$f"; then
         psql -U postgres -d postgres -c \
             "INSERT INTO public._applied_migrations (version) VALUES ('$version') ON CONFLICT DO NOTHING;" \
             > /dev/null 2>&1
+        echo "  OK: $version"
         applied=$((applied + 1))
     else
-        echo "  WARN: $version hatte Fehler (uebersprungen)"
+        echo "  FEHLER: $version (Migration fehlgeschlagen – Datenbank pruefen)"
         failed=$((failed + 1))
     fi
 done
 
-echo "init-migrations: Fertig. $applied angewendet, $failed mit Warnungen."
+if [ "$failed" -gt 0 ]; then
+    echo "init-migrations: WARNUNG – $applied angewendet, $failed fehlgeschlagen."
+    echo "init-migrations: Fehlerhafte Migrationen manuell pruefen!"
+else
+    echo "init-migrations: Fertig. $applied Migrationen erfolgreich angewendet."
+fi
