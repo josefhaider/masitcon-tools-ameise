@@ -1269,6 +1269,12 @@ setup_server() {
 
     wait_for_health "$DC" "$COMPOSE_FILE" "$SECRETS_FILE"
 
+    # Migrationen anwenden (läuft idempotent – überspringt bereits angewendete)
+    # init-migrations.sh hat sie beim ersten DB-Start bereits angewendet;
+    # do_migrate() stellt sicher dass nichts fehlt und zeigt den Status an.
+    info "Verifiziere Datenbankmigrationen..."
+    do_migrate || { err "Migrationen fehlgeschlagen – Deployment abgebrochen"; exit 1; }
+
     # Zeitstempel speichern
     date '+%Y-%m-%d %H:%M:%S' > "${DIR_BASE}/.last-deploy"
 
