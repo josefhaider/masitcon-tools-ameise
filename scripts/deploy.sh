@@ -416,6 +416,10 @@ BUILD_MODE=development
 # Edge Functions
 DATA_TRANSFER_PASSWORD=ameise-local-transfer
 
+# Supabase Studio – Anzeigename
+STUDIO_DEFAULT_ORGANIZATION=Masitcon
+STUDIO_DEFAULT_PROJECT=Ameise Local
+
 # SMTP → Inbucket (lokal, kein echter Versand)
 SMTP_ADMIN_EMAIL=admin@ameise.local
 SMTP_SENDER_NAME="Ameise Local"
@@ -723,6 +727,61 @@ SAVEDCFG
     chmod 600 "$cfg"
 }
 
+# Sendet eine echte Test-E-Mail via curl um SMTP-Credentials zu verifizieren
+_smtp_send_test() {
+    local recipient="$1"
+    local subject="Ameise SMTP-Test (${ENV_TARGET})"
+    local body
+    body="Hallo,
+
+dies ist eine automatische Test-E-Mail von deploy.sh.
+
+Konfiguration:
+  Host:     ${SMTP_HOST}:${SMTP_PORT}
+  Absender: ${SMTP_ADMIN_EMAIL}
+  Umgebung: ${ENV_TARGET}
+
+Wenn du diese Mail erhältst, funktioniert SMTP korrekt.
+
+-- Ameise Deploy-Script"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        warn "curl nicht gefunden – SMTP-Test übersprungen"
+        return 0
+    fi
+
+    info "Sende Test-E-Mail an ${recipient}..."
+
+    local protocol="smtps"
+    local curl_tls_flag=""
+    if [ "$SMTP_PORT" = "587" ]; then
+        protocol="smtp"
+        curl_tls_flag="--ssl-reqd"
+    fi
+
+    local mail_content
+    mail_content="From: ${SMTP_SENDER_NAME:-Ameise} <${SMTP_ADMIN_EMAIL}>
+To: ${recipient}
+Subject: ${subject}
+Content-Type: text/plain; charset=UTF-8
+
+${body}"
+
+    if echo "$mail_content" | timeout 15 curl --silent --show-error \
+        $curl_tls_flag \
+        --url "${protocol}://${SMTP_HOST}:${SMTP_PORT}" \
+        --user "${SMTP_USER}:${SMTP_PASS}" \
+        --mail-from "${SMTP_ADMIN_EMAIL}" \
+        --mail-rcpt "${recipient}" \
+        --upload-file - 2>&1; then
+        log "Test-E-Mail erfolgreich gesendet an ${recipient}"
+    else
+        warn "Test-E-Mail konnte nicht gesendet werden"
+        warn "SMTP-Daten prüfen: Host, Port, Benutzername, Passwort"
+        info "Konfiguration wird trotzdem gespeichert – später prüfen."
+    fi
+}
+
 collect_config() {
     header "Server-Konfiguration"
 
@@ -899,22 +958,11 @@ collect_config() {
         SMTP_SENDER_NAME=$(ask "Absendername (erscheint in E-Mails)" "${SMTP_SENDER_NAME:-Ameise}")
         echo ""
 
-        # SMTP-Verbindungstest
-        if [ -n "$SMTP_PASS" ] && command -v openssl >/dev/null 2>&1; then
-            info "Teste SMTP-Verbindung zu ${SMTP_HOST}:${SMTP_PORT}..."
-            local test_result
-            if [ "$SMTP_PORT" = "465" ]; then
-                test_result=$(echo "QUIT" | timeout 8 openssl s_client \
-                    -connect "${SMTP_HOST}:${SMTP_PORT}" -quiet 2>&1 || true)
-            else
-                test_result=$(echo "QUIT" | timeout 8 openssl s_client \
-                    -connect "${SMTP_HOST}:${SMTP_PORT}" -starttls smtp -quiet 2>&1 || true)
-            fi
-            if echo "$test_result" | grep -qi "220\|250\|ok\|connected"; then
-                log "SMTP-Verbindung erfolgreich"
-            else
-                warn "SMTP-Verbindung konnte nicht verifiziert werden (Firewall? Falscher Host?)"
-                warn "Die Konfiguration wird trotzdem gespeichert."
+        # SMTP-Test: echte Test-E-Mail senden via curl
+        if [ -n "$SMTP_PASS" ]; then
+            if confirm "Test-E-Mail senden um SMTP zu verifizieren?" "j"; then
+                local test_recipient; test_recipient=$(ask "Empfänger-E-Mail für Test" "${SMTP_ADMIN_EMAIL:-${SMTP_USER}}")
+                _smtp_send_test "$test_recipient"
             fi
         fi
     else
@@ -1034,6 +1082,16 @@ show_summary() {
 write_env_file() {
     # Haupt-Secrets-Datei (600 – nur root/deploy-user lesbar)
     local secrets_file="${DIR_BASE}/secrets.env"
+
+    # Studio-Anzeigenamen aus Umgebung ableiten
+    local studio_org="Masitcon"
+    local studio_project
+    case "$ENV_TARGET" in
+        production) studio_project="Ameise Production" ;;
+        staging)    studio_project="Ameise Staging"    ;;
+        *)          studio_project="Ameise ${ENV_TARGET}" ;;
+    esac
+
     cat > "$secrets_file" << SECRETSENV
 # ${PROJECT_DISPLAY} – Supabase-Schlüssel
 # Generiert am $(date '+%Y-%m-%d %H:%M') – NIEMALS committen!
@@ -1068,6 +1126,10 @@ DOCKER_SUBNET=${DEPLOY_DOCKER_SUBNET}
 # Edge Functions
 DATA_TRANSFER_PASSWORD=${DEPLOY_DATA_TRANSFER_PASSWORD}
 ALLOWED_ORIGIN=${_SITE_URL}
+
+# Supabase Studio – Anzeigename
+STUDIO_DEFAULT_ORGANIZATION=${studio_org}
+STUDIO_DEFAULT_PROJECT=${studio_project}
 
 # SMTP (leer = keine E-Mails)
 SMTP_HOST=${SMTP_HOST}
