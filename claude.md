@@ -1,3 +1,49 @@
+# Masitcon Ameise – Agenten-System
+
+## Orchestrierung: Welcher Subagent für welche Aufgabe?
+
+Bevor du mit einer Aufgabe beginnst, entscheide welcher Subagent am besten passt:
+
+| Aufgabe | Claude Code Subagent | Cursor Rule |
+|---------|---------------------|-------------|
+| React-Komponenten, UI, Seiten, Formulare | `frontend-entwickler` | `01-frontend-agent.mdc` |
+| SQL-Migrationen, RLS-Policies, DB-Schema | `backend-entwickler` | `02-datenbank-agent.mdc` |
+| Hono-Routen, Kong-Konfiguration | `programmierer` | `03-api-agent.mdc` |
+| Docker Compose, deploy.sh, server-init.sh | `devops` | `04-devops-agent.mdc` |
+| deploy.sh / server-init.sh neu generieren | `deploy-script-generator` | `04-devops-agent.mdc` |
+| Bug-Analyse, Fehlersuche, Refactoring | `programmierer` + `Explore` | kontextabhängig |
+| Feature planen, Anforderungen klären | `planer` | alle |
+| UX-Review, Accessibility | `ux-berater` | `01-frontend-agent.mdc` |
+| Nicht-Entwickler Anfragen | `planer` | `05-nicht-entwickler.mdc` |
+
+## Projekt-Kurzübersicht (für schnellen Einstieg)
+
+**Stack:** React 18 + Vite + TypeScript + Tailwind (Frontend) | Supabase (Self-hosted Docker) | Hono.js 4 (API) | Kong 2.8.1 (Gateway) | Caddy (Proxy)
+
+**Schlüsseldateien:**
+- `src/integrations/supabase/client.ts` – Supabase-Client
+- `api/src/index.ts` – Hono API (3 Routen)
+- `docker/docker-compose.local.yml` – Lokaler Stack (10 Services)
+- `supabase/migrations/` – 17 SQL-Migrationen
+- `scripts/deploy.sh` – Deployment-Orchestrierung
+
+**Ports lokal:** App :8080 | Kong/API :8100 | Studio :3101 | Inbucket :9000 | DB :5433
+
+**Stack starten:**
+```bash
+bash scripts/deploy.sh --local   # Alles auf einmal
+# oder manuell:
+docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local up -d
+npm run dev
+```
+
+**Stil-Regeln (zwingend):**
+- Deutsche Kommentare, Benutzerführung, Fehlermeldungen
+- Englische Variablen, Funktionen, TypeScript-Interfaces
+- Neue ENV-Variablen immer an 4 Stellen: `.env.example`, `docker/.env.local.example`, `docker-compose.local.yml`, `scripts/deploy.sh`
+
+---
+
 # Claude Code – Deploy-Script Generator
 
 ## Deine Aufgabe
