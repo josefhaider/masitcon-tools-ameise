@@ -121,6 +121,7 @@ ENV_TARGET="production"
 ENV_EXPLICIT=false
 SHOW_LOGS_SERVICE=""
 CLEAN_FULL=false
+CLI_BASE_DIR=""   # überschreibt interaktive Abfrage wenn gesetzt
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -136,8 +137,9 @@ while [[ $# -gt 0 ]]; do
         --migrate)     MODE="migrate"; shift ;;
         --backup)      MODE="backup";  shift ;;
         --check-ports) MODE="check-ports"; shift ;;
-        --env)     ENV_TARGET="${2:-production}"; ENV_EXPLICIT=true; shift 2 ;;
-        --service) SHOW_LOGS_SERVICE="${2:-}"; shift 2 ;;
+        --env)      ENV_TARGET="${2:-production}"; ENV_EXPLICIT=true; shift 2 ;;
+        --base-dir) CLI_BASE_DIR="${2:-}"; shift 2 ;;
+        --service)  SHOW_LOGS_SERVICE="${2:-}"; shift 2 ;;
         --help|-h)
             cat << 'HELP'
 Deploy-Script für masitcon Zeiterfassung (Ameise)
@@ -159,6 +161,7 @@ Modi:
 
 Optionen:
   --env production|staging    Ziel-Umgebung (Default: production)
+  --base-dir /pfad            Basisverzeichnis für Installation (Default: /opt/projects/masitcon-tools-ameise)
   --service NAME              Für --logs: nur diesen Container
   --help                      Diese Hilfe
 HELP
@@ -168,7 +171,8 @@ HELP
 done
 
 # ─── Ordnerstruktur ──────────────────────────────────────────────
-DIR_BASE="/opt/projects/${PROJECT_NAME}"
+# Standard: /opt/projects/${PROJECT_NAME} – überschreibbar per --base-dir oder Wizard
+DIR_BASE="${CLI_BASE_DIR:-/opt/projects/${PROJECT_NAME}}"
 DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
 DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
 DIR_BACKUPS="${DIR_BASE}/backups"
@@ -679,6 +683,15 @@ _load_saved_config() {
     [ -f "$cfg" ] || return 0
     # shellcheck source=/dev/null
     source "$cfg"
+    # Pfad-Variablen aus gespeichertem DIR_BASE ableiten (falls abweichend)
+    if [ -n "${DIR_BASE:-}" ]; then
+        DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
+        DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
+        DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
+        DIR_BACKUPS="${DIR_BASE}/backups"
+        DIR_LOGS="${DIR_BASE}/logs"
+        DEPLOY_ENV_FILE="${DIR_BASE}/deploy.env"
+    fi
     echo -e "  ${GREEN}✓${NC} Vorherige Konfiguration geladen."
     echo -e "  ${DIM}Enter = bisherigen Wert übernehmen.${NC}"
     echo ""
@@ -696,6 +709,7 @@ _save_config() {
     cat > "$cfg" << SAVEDCFG
 # Gespeicherte Konfiguration – ${PROJECT_DISPLAY}
 # Automatisch von deploy.sh generiert – nicht manuell bearbeiten
+DIR_BASE=${DIR_BASE}
 DEPLOY_DOMAIN=${DEPLOY_DOMAIN}
 DEPLOY_PROTOCOL=${DEPLOY_PROTOCOL}
 DEPLOY_GIT_REMOTE=${DEPLOY_GIT_REMOTE}
@@ -735,6 +749,26 @@ collect_config() {
     fi
     log "Umgebung: ${ENV_TARGET}"
     echo ""
+
+    # ── 0. Basisverzeichnis ──────────────────────────────────────
+    # Nur abfragen wenn nicht per --base-dir CLI-Flag gesetzt
+    if [ -z "$CLI_BASE_DIR" ]; then
+        echo "  ${DIM}Verzeichnis auf dem Server, in dem alle Projektdaten gespeichert werden.${NC}"
+        echo "  ${DIM}Empfehlung: /opt/projects/${PROJECT_NAME}${NC}"
+        echo ""
+        local new_base; new_base=$(ask "Installationsverzeichnis" "${DIR_BASE}")
+        if [ -n "$new_base" ] && [ "$new_base" != "$DIR_BASE" ]; then
+            DIR_BASE="$new_base"
+            DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
+            DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
+            DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
+            DIR_BACKUPS="${DIR_BASE}/backups"
+            DIR_LOGS="${DIR_BASE}/logs"
+            DEPLOY_ENV_FILE="${DIR_BASE}/deploy.env"
+        fi
+        log "Installationsverzeichnis: ${DIR_BASE}"
+        echo ""
+    fi
 
     # Gespeicherte Config laden (idempotenz)
     _load_saved_config
@@ -986,6 +1020,7 @@ collect_config() {
 show_summary() {
     header "Zusammenfassung"
     echo -e "  ${BOLD}Umgebung:${NC}         ${ENV_TARGET}"
+    echo -e "  ${BOLD}Verzeichnis:${NC}      ${DIR_BASE}"
     echo -e "  ${BOLD}Domain:${NC}           ${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}"
     echo -e "  ${BOLD}API (Kong):${NC}       ${_API_EXTERNAL_URL}"
     echo -e "  ${BOLD}Git:${NC}              ${DEPLOY_GIT_REMOTE} (${DEPLOY_GIT_BRANCH})"
