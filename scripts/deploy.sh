@@ -171,10 +171,13 @@ HELP
 done
 
 # ─── Ordnerstruktur ──────────────────────────────────────────────
-# Standard: /opt/masitcon/ameise – überschreibbar per --base-dir oder Wizard
+# DIR_APP: Repo-Verzeichnis – immer das Verzeichnis in dem deploy.sh liegt.
+#          Kein extra app/-Unterverzeichnis mehr nötig.
+# DIR_BASE: Nur für Konfiguration, Secrets und Nginx-Snippets.
+#           Standard: /opt/masitcon/ameise – überschreibbar per --base-dir oder Wizard
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR_APP="$(dirname "$_SCRIPT_DIR")"          # Repo-Root (Elternverzeichnis von scripts/)
 DIR_BASE="${CLI_BASE_DIR:-/opt/masitcon/ameise}"
-DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
-DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
 DIR_BACKUPS="${DIR_BASE}/backups"
 DIR_LOGS="${DIR_BASE}/logs"
 DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
@@ -186,17 +189,13 @@ load_or_init_dirs() {
     if [ -f "$env_file" ]; then
         # shellcheck source=/dev/null
         source "$env_file"
-        return 0
     fi
     # Fallback: gemeinsame deploy.env
     if [ -f "$DEPLOY_ENV_FILE" ]; then
         # shellcheck source=/dev/null
         source "$DEPLOY_ENV_FILE"
-        return 0
     fi
-    # Noch nicht konfiguriert → Defaults aus ENV_TARGET
-    DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
-    DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
+    # DIR_APP bleibt immer das Repo-Root wo das Script liegt
     DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
 }
 
@@ -211,9 +210,6 @@ ask_env_target() {
         *) ENV_TARGET="production" ;;
     esac
     log "Umgebung: ${ENV_TARGET}"
-    # Pfade aktualisieren
-    DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
-    DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
     DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
 }
 
@@ -683,10 +679,8 @@ _load_saved_config() {
     [ -f "$cfg" ] || return 0
     # shellcheck source=/dev/null
     source "$cfg"
-    # Pfad-Variablen aus gespeichertem DIR_BASE ableiten (falls abweichend)
+    # DIR_BASE aus config.env übernehmen und abhängige Pfade aktualisieren
     if [ -n "${DIR_BASE:-}" ]; then
-        DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
-        DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
         DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
         DIR_BACKUPS="${DIR_BASE}/backups"
         DIR_LOGS="${DIR_BASE}/logs"
@@ -743,30 +737,28 @@ collect_config() {
             2) ENV_TARGET="staging" ;;
             *) ENV_TARGET="production" ;;
         esac
-        DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
-        DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
         DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
     fi
     log "Umgebung: ${ENV_TARGET}"
     echo ""
 
-    # ── 0. Basisverzeichnis ──────────────────────────────────────
-    # Nur abfragen wenn nicht per --base-dir CLI-Flag gesetzt
+    # ── 0. Konfigurationsverzeichnis ─────────────────────────────
+    # Das Repo-Verzeichnis (DIR_APP) ist immer dort wo deploy.sh liegt.
+    # Hier wird nur das Verzeichnis für Secrets und Nginx-Snippets abgefragt.
     if [ -z "$CLI_BASE_DIR" ]; then
-        echo "  ${DIM}Verzeichnis auf dem Server, in dem alle Projektdaten gespeichert werden.${NC}"
+        echo "  ${DIM}Verzeichnis für Konfiguration und Secrets (nicht das Repo selbst).${NC}"
         echo "  ${DIM}Empfehlung: /opt/masitcon/ameise${NC}"
         echo ""
-        local new_base; new_base=$(ask "Installationsverzeichnis" "${DIR_BASE}")
+        local new_base; new_base=$(ask "Konfigurationsverzeichnis" "${DIR_BASE}")
         if [ -n "$new_base" ] && [ "$new_base" != "$DIR_BASE" ]; then
             DIR_BASE="$new_base"
-            DIR_APP="${DIR_BASE}/${ENV_TARGET}/app"
-            DIR_DATA="${DIR_BASE}/${ENV_TARGET}/data"
             DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
             DIR_BACKUPS="${DIR_BASE}/backups"
             DIR_LOGS="${DIR_BASE}/logs"
             DEPLOY_ENV_FILE="${DIR_BASE}/deploy.env"
         fi
-        log "Installationsverzeichnis: ${DIR_BASE}"
+        log "Konfigurationsverzeichnis: ${DIR_BASE}"
+        log "Repo-Verzeichnis:          ${DIR_APP}"
         echo ""
     fi
 
@@ -1092,8 +1084,6 @@ SECRETSENV
     local deploy_env="${DIR_BASE}/deploy.env.${ENV_TARGET}"
     cat > "$deploy_env" << DEPLOYENV
 # Deploy-Metadaten – ${ENV_TARGET}
-DIR_APP=${DIR_APP}
-DIR_DATA=${DIR_DATA}
 DIR_CONFIGS=${DIR_CONFIGS}
 DEPLOYENV
     chmod 600 "$deploy_env"
@@ -1208,46 +1198,25 @@ setup_server() {
     collect_config
     show_summary
 
-    # Verzeichnisse anlegen (ggf. sudo für /opt/masitcon)
-    # WICHTIG: DIR_APP wird NICHT vorab angelegt – es wird später als Symlink
-    #          oder git-Clone erstellt. Nur den Parent anlegen.
+    # Konfigurationsverzeichnisse anlegen (ggf. sudo für /opt/masitcon)
+    # Das Repo (DIR_APP) bleibt wo es ist – kein Symlink/Clone mehr nötig.
     if ! mkdir -p "$DIR_BASE" 2>/dev/null; then
         info "Erstelle Verzeichnisse mit sudo (Passwort kann abgefragt werden)..."
         sudo mkdir -p "$DIR_BASE"
         sudo chown "$(id -u):$(id -g)" "$DIR_BASE"
     fi
-    for d in "$(dirname "$DIR_APP")" "$DIR_DATA" "$DIR_CONFIGS" "$DIR_BACKUPS" "$DIR_LOGS"; do
+    for d in "$DIR_CONFIGS" "$DIR_BACKUPS" "$DIR_LOGS"; do
         mkdir -p "$d" 2>/dev/null || { sudo mkdir -p "$d"; sudo chown "$(id -u):$(id -g)" "$d"; }
     done
-    log "Verzeichnisse erstellt: ${DIR_BASE}/"
+    log "Konfigurationsverzeichnisse erstellt: ${DIR_BASE}/"
+    log "Repo-Verzeichnis: ${DIR_APP}"
 
-    # Log-Verzeichnis (Nginx nutzt /var/log/nginx – kein eigenes Verzeichnis nötig)
+    # Log-Verzeichnis (Nginx nutzt /var/log/nginx)
     sudo mkdir -p "/var/log/nginx" 2>/dev/null || true
 
-    # Repo: Bereits geklontes Repo nutzen oder neu klonen
-    local SCRIPT_DIR; SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local SCRIPT_REPO_ROOT; SCRIPT_REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-
-    if [ -L "$DIR_APP" ] || [ -d "${DIR_APP}/.git" ]; then
-        # Symlink oder vorhandenes Repo – aktualisieren
-        info "Repo unter ${DIR_APP} vorhanden – aktualisiere..."
-        git -C "$DIR_APP" fetch origin 2>/dev/null || true
-        git -C "$DIR_APP" checkout "$DEPLOY_GIT_BRANCH" 2>/dev/null || true
-        git -C "$DIR_APP" pull origin "$DEPLOY_GIT_BRANCH" 2>/dev/null || true
-    elif [ -d "${SCRIPT_REPO_ROOT}/.git" ] && [ "$SCRIPT_REPO_ROOT" != "$DIR_APP" ]; then
-        # Aktuelles Repo als Symlink einbinden (kein Transfer nötig)
-        info "Repo vom aktuellen Verzeichnis verlinken: ${SCRIPT_REPO_ROOT} → ${DIR_APP}"
-        # Evtl. vom mkdir übrig gebliebenes leeres Verzeichnis entfernen
-        [ -d "$DIR_APP" ] && ! [ -L "$DIR_APP" ] && rmdir "$DIR_APP" 2>/dev/null || true
-        ln -sfn "$SCRIPT_REPO_ROOT" "$DIR_APP" \
-            || { err "Symlink konnte nicht erstellt werden: ${DIR_APP}"; exit 1; }
-    else
-        info "Klone Repo: ${DEPLOY_GIT_REMOTE}..."
-        git clone --branch "$DEPLOY_GIT_BRANCH" "$DEPLOY_GIT_REMOTE" "$DIR_APP" \
-            || { err "git clone fehlgeschlagen – SSH-Key vorhanden?"; exit 1; }
-    fi
+    # Repo-Stand prüfen und aktualisieren
     local git_hash; git_hash=$(git -C "$DIR_APP" rev-parse --short HEAD 2>/dev/null || echo 'unbekannt')
-    log "Repo: ${git_hash}  (${DIR_APP})"
+    log "Repo: ${git_hash}"
 
     # Env-Datei schreiben (enthält alle Secrets)
     write_env_file
@@ -1410,9 +1379,9 @@ do_update() {
     header "Update – ${PROJECT_DISPLAY} (${ENV_TARGET})"
     load_or_init_dirs
 
-    if [ ! -d "${DIR_APP}/.git" ] && [ ! -L "${DIR_APP}" ]; then
-        err "Kein Repo unter ${DIR_APP} – zuerst Server-Setup ausführen"
-        info "bash scripts/deploy.sh --env ${ENV_TARGET}"
+    if [ ! -d "${DIR_APP}/.git" ]; then
+        err "Kein Git-Repo unter ${DIR_APP}"
+        info "deploy.sh muss aus dem Repo-Verzeichnis heraus ausgeführt werden"
         exit 1
     fi
 
