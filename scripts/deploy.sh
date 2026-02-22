@@ -1168,12 +1168,14 @@ setup_server() {
     show_summary
 
     # Verzeichnisse anlegen (ggf. sudo für /opt/projects)
+    # WICHTIG: DIR_APP wird NICHT vorab angelegt – es wird später als Symlink
+    #          oder git-Clone erstellt. Nur den Parent anlegen.
     if ! mkdir -p "$DIR_BASE" 2>/dev/null; then
         info "Erstelle Verzeichnisse mit sudo (Passwort kann abgefragt werden)..."
         sudo mkdir -p "$DIR_BASE"
         sudo chown "$(id -u):$(id -g)" "$DIR_BASE"
     fi
-    for d in "$DIR_APP" "$DIR_DATA" "$DIR_CONFIGS" "$DIR_BACKUPS" "$DIR_LOGS"; do
+    for d in "$(dirname "$DIR_APP")" "$DIR_DATA" "$DIR_CONFIGS" "$DIR_BACKUPS" "$DIR_LOGS"; do
         mkdir -p "$d" 2>/dev/null || { sudo mkdir -p "$d"; sudo chown "$(id -u):$(id -g)" "$d"; }
     done
     log "Verzeichnisse erstellt: ${DIR_BASE}/"
@@ -1185,21 +1187,26 @@ setup_server() {
     local SCRIPT_DIR; SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local SCRIPT_REPO_ROOT; SCRIPT_REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
-    if [ -d "${DIR_APP}/.git" ]; then
-        info "Repo unter ${DIR_APP} existiert – aktualisiere..."
-        git -C "$DIR_APP" fetch origin
-        git -C "$DIR_APP" checkout "$DEPLOY_GIT_BRANCH"
-        git -C "$DIR_APP" pull origin "$DEPLOY_GIT_BRANCH"
-    elif [ -d "${SCRIPT_REPO_ROOT}/.git" ] && [ "$SCRIPT_REPO_ROOT" != "$DIR_APP" ]; then
-        info "Repo vom aktuellen Verzeichnis verlinken..."
-        ln -sfn "$SCRIPT_REPO_ROOT" "$DIR_APP"
+    if [ -L "$DIR_APP" ] || [ -d "${DIR_APP}/.git" ]; then
+        # Symlink oder vorhandenes Repo – aktualisieren
+        info "Repo unter ${DIR_APP} vorhanden – aktualisiere..."
+        git -C "$DIR_APP" fetch origin 2>/dev/null || true
+        git -C "$DIR_APP" checkout "$DEPLOY_GIT_BRANCH" 2>/dev/null || true
         git -C "$DIR_APP" pull origin "$DEPLOY_GIT_BRANCH" 2>/dev/null || true
+    elif [ -d "${SCRIPT_REPO_ROOT}/.git" ] && [ "$SCRIPT_REPO_ROOT" != "$DIR_APP" ]; then
+        # Aktuelles Repo als Symlink einbinden (kein Transfer nötig)
+        info "Repo vom aktuellen Verzeichnis verlinken: ${SCRIPT_REPO_ROOT} → ${DIR_APP}"
+        # Evtl. vom mkdir übrig gebliebenes leeres Verzeichnis entfernen
+        [ -d "$DIR_APP" ] && ! [ -L "$DIR_APP" ] && rmdir "$DIR_APP" 2>/dev/null || true
+        ln -sfn "$SCRIPT_REPO_ROOT" "$DIR_APP" \
+            || { err "Symlink konnte nicht erstellt werden: ${DIR_APP}"; exit 1; }
     else
         info "Klone Repo: ${DEPLOY_GIT_REMOTE}..."
         git clone --branch "$DEPLOY_GIT_BRANCH" "$DEPLOY_GIT_REMOTE" "$DIR_APP" \
             || { err "git clone fehlgeschlagen – SSH-Key vorhanden?"; exit 1; }
     fi
-    log "Repo: $(git -C "$DIR_APP" rev-parse --short HEAD 2>/dev/null || echo 'unbekannt')"
+    local git_hash; git_hash=$(git -C "$DIR_APP" rev-parse --short HEAD 2>/dev/null || echo 'unbekannt')
+    log "Repo: ${git_hash}  (${DIR_APP})"
 
     # Env-Datei schreiben (enthält alle Secrets)
     write_env_file
