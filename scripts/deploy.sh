@@ -218,6 +218,7 @@ while [[ $# -gt 0 ]]; do
         --backup)       MODE="backup";       shift ;;
         --check-ports)   MODE="check-ports";   shift ;;
         --reconfigure)   MODE="reconfigure";   shift ;;
+        --clone-repo)    MODE="clone-repo";    shift ;;
         --sync-migrations) MODE="sync-migrations"; shift ;;
         --setup-nginx)     MODE="setup-nginx";     shift ;;
         --reset-db)        MODE="reset-db";        shift ;;
@@ -243,6 +244,7 @@ Modi:
   --prune            Docker-System aufräumen (ungenutzte Images/Volumes)
   --check-ports      Ports prüfen (Supabase) – zeigt Belegung, bietet Alternativen
   --reconfigure      Bestehende Einstellungen laden, ändern und neu deployen
+  --clone-repo       Repo in Deployment-Verzeichnis klonen/aktualisieren (ohne Wizard)
   --sync-migrations  Migrationen als angewendet markieren (ohne Ausführung)
   --setup-nginx      Nginx-Configs nach sites-available kopieren + Symlinks in sites-enabled
   --reset-db         DB-Volume löschen und neu initialisieren (bei korruptem Volume)
@@ -2054,6 +2056,31 @@ do_backup() {
         || err "Backup fehlgeschlagen (supabase start ausgeführt?)"
 }
 
+do_clone_repo() {
+    header "Repo ins Deployment-Verzeichnis klonen – ${PROJECT_DISPLAY} (${ENV_TARGET})"
+    load_or_init_dirs
+
+    local cfg="${DIR_BASE}/config.env.${ENV_TARGET}"
+    [ -f "$cfg" ] || cfg="${DIR_BASE}/config.env"
+    if [ ! -f "$cfg" ]; then
+        err "Keine Konfiguration gefunden unter ${DIR_BASE}"
+        info "Zuerst Setup ausführen: bash scripts/deploy.sh --env ${ENV_TARGET}"
+        exit 1
+    fi
+    # shellcheck source=/dev/null
+    source "$cfg"
+
+    if [ -z "${DEPLOY_GIT_REMOTE:-}" ]; then
+        err "DEPLOY_GIT_REMOTE nicht gesetzt – Reconfigure ausführen: bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET}"
+        exit 1
+    fi
+
+    _clone_or_update_repo || { err "Repo-Clone/-Update fehlgeschlagen"; exit 1; }
+    _save_config
+    log "Fertig. Deployment-Verzeichnis: ${DIR_APP}"
+    info "Nächster Schritt: bash scripts/deploy.sh --update --env ${ENV_TARGET}"
+}
+
 do_reconfigure() {
     header "Rekonfiguration – ${PROJECT_DISPLAY} (${ENV_TARGET})"
 
@@ -2085,11 +2112,15 @@ do_reconfigure() {
     collect_config
     show_summary
 
+    # Repo in Deployment-Verzeichnis klonen/aktualisieren (DIR_APP wird gesetzt)
+    _clone_or_update_repo || { err "Repo-Clone/-Update fehlgeschlagen"; exit 1; }
+    _save_config
+
     local DC; DC=$(detect_compose)
     local COMPOSE_FILE="${DIR_APP}/docker/docker-compose.yml"
     local SECRETS_FILE="${DIR_BASE}/secrets.env"
     [ -z "$DC" ] && { err "Docker Compose nicht gefunden"; exit 1; }
-    [ ! -f "$COMPOSE_FILE" ] && { err "docker/docker-compose.yml nicht gefunden"; exit 1; }
+    [ ! -f "$COMPOSE_FILE" ] && { err "docker/docker-compose.yml nicht gefunden unter ${DIR_APP}"; exit 1; }
 
     # Neue secrets.env und Nginx-Konfiguration schreiben
     write_env_file
@@ -2179,7 +2210,7 @@ main() {
 
     # Umgebung abfragen, wenn für diesen Modus nötig und nicht per --env gesetzt
     case "$MODE" in
-        update|status|logs|stop|restart|clean|backup|reconfigure|sync-migrations)
+        update|status|logs|stop|restart|clean|backup|reconfigure|clone-repo|sync-migrations)
             ask_env_target
             echo -e "  ${DIM}Umgebung: ${ENV_TARGET}${NC}"
             echo ""
@@ -2199,6 +2230,7 @@ main() {
         backup)       do_backup       ;;
         check-ports)  do_check_ports  ;;
         reconfigure)     do_reconfigure     ;;
+        clone-repo)      do_clone_repo      ;;
         sync-migrations) do_sync_migrations ;;
         setup-nginx)     do_setup_nginx    ;;
         reset-db)        do_reset_db       ;;
