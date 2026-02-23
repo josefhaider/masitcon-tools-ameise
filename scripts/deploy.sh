@@ -1267,24 +1267,46 @@ wait_for_health() {
     local DC="$1" compose_file="$2" env_file="$3"
     local project="${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}"
     local i=0
-    # Warte explizit bis DB *und* Auth-Container (GoTrue) healthy sind.
-    # GoTrue führt beim Start eigene Migrationen auf auth.users durch – läuft
-    # do_migrate() vorher, entstehen Deadlocks auf auth.users (Race Condition).
+
+    # Phase 1: Warte bis DB healthy ist (zwingend für Migrationen)
     while [ $i -lt 180 ]; do
-        local db_healthy auth_healthy running
+        local db_healthy
         db_healthy=$(docker inspect --format='{{.State.Health.Status}}' "${project}-db" 2>/dev/null || echo "")
-        auth_healthy=$(docker inspect --format='{{.State.Health.Status}}' "${project}-auth" 2>/dev/null || echo "")
-        running=$($DC --env-file "$env_file" -f "$compose_file" ps 2>/dev/null | grep -c "Up" || true)
-        if [ "$db_healthy" = "healthy" ] && [ "$auth_healthy" = "healthy" ]; then
-            log "Stack gestartet (${running} Container laufen)"
-            return 0
+        if [ "$db_healthy" = "healthy" ]; then
+            break
         fi
-        sleep 3
-        i=$((i + 3))
-        printf "."
+        sleep 3; i=$((i + 3)); printf "."
     done
     echo ""
-    warn "Timeout – Status prüfen: bash scripts/deploy.sh --status --env ${ENV_TARGET}"
+    if [ $i -ge 180 ]; then
+        warn "Timeout – DB nicht erreichbar. Status prüfen: bash scripts/deploy.sh --status --env ${ENV_TARGET}"
+        return
+    fi
+    log "Datenbank bereit"
+
+    # Phase 2: GoTrue direkt per HTTP testen – unabhängig vom Docker-Healthcheck-Status.
+    # docker inspect zeigt "unhealthy" wenn GoTrue beim Start ohne start_period zu langsam war.
+    # Die direkte Abfrage erkennt, ob GoTrue tatsächlich antwortet (Race Condition verhindern).
+    local auth_wait=0
+    info "Warte auf Auth-Service (GoTrue)..."
+    while [ $auth_wait -lt 90 ]; do
+        if docker exec "${project}-auth" \
+            wget --no-verbose --tries=1 --spider http://localhost:9999/health 2>/dev/null; then
+            break
+        fi
+        sleep 3; auth_wait=$((auth_wait + 3)); printf "."
+    done
+    echo ""
+    if [ $auth_wait -ge 90 ]; then
+        warn "Auth-Service nicht erreichbar nach 90s – Migrationen werden trotzdem versucht"
+        warn "Logs prüfen: docker logs ${project}-auth"
+    else
+        log "Auth-Service bereit"
+    fi
+
+    local running
+    running=$($DC --env-file "$env_file" -f "$compose_file" ps 2>/dev/null | grep -c "Up" || true)
+    log "Stack gestartet (${running} Container laufen)"
 }
 
 # Generiert Nginx-Config. Optional: _generate_nginx_for_env "production"|"staging"

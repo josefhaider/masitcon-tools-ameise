@@ -1,8 +1,13 @@
 -- Create app_role enum for user roles
-CREATE TYPE public.app_role AS ENUM ('admin', 'employee');
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'app_role'
+                 AND typnamespace = 'public'::regnamespace) THEN
+    CREATE TYPE public.app_role AS ENUM ('admin', 'employee');
+  END IF;
+END $$;
 
 -- Create profiles table
-CREATE TABLE public.profiles (
+CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
   full_name TEXT NOT NULL,
@@ -11,7 +16,7 @@ CREATE TABLE public.profiles (
 );
 
 -- Create user_roles table (separate from profiles for security)
-CREATE TABLE public.user_roles (
+CREATE TABLE IF NOT EXISTS public.user_roles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   role app_role NOT NULL,
@@ -20,7 +25,7 @@ CREATE TABLE public.user_roles (
 );
 
 -- Create time_templates table (predefined work time schemas)
-CREATE TABLE public.time_templates (
+CREATE TABLE IF NOT EXISTS public.time_templates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   start_time TIME NOT NULL,
@@ -33,7 +38,7 @@ CREATE TABLE public.time_templates (
 );
 
 -- Create time_entries table
-CREATE TABLE public.time_entries (
+CREATE TABLE IF NOT EXISTS public.time_entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   date DATE NOT NULL,
@@ -47,10 +52,15 @@ CREATE TABLE public.time_entries (
 );
 
 -- Create absence_type enum
-CREATE TYPE public.absence_type AS ENUM ('vacation', 'sick', 'other');
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'absence_type'
+                 AND typnamespace = 'public'::regnamespace) THEN
+    CREATE TYPE public.absence_type AS ENUM ('vacation', 'sick', 'other');
+  END IF;
+END $$;
 
 -- Create absences table
-CREATE TABLE public.absences (
+CREATE TABLE IF NOT EXISTS public.absences (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   type absence_type NOT NULL,
@@ -86,70 +96,83 @@ AS $$
 $$;
 
 -- RLS Policies for profiles
+DROP POLICY IF EXISTS "Users can view all profiles" ON public.profiles;
 CREATE POLICY "Users can view all profiles"
   ON public.profiles FOR SELECT
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile"
   ON public.profiles FOR UPDATE
   TO authenticated
   USING (auth.uid() = id);
 
+DROP POLICY IF EXISTS "Profiles created on signup" ON public.profiles;
 CREATE POLICY "Profiles created on signup"
   ON public.profiles FOR INSERT
   TO authenticated
   WITH CHECK (auth.uid() = id);
 
 -- RLS Policies for user_roles
+DROP POLICY IF EXISTS "Users can view all roles" ON public.user_roles;
 CREATE POLICY "Users can view all roles"
   ON public.user_roles FOR SELECT
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Only admins can manage roles" ON public.user_roles;
 CREATE POLICY "Only admins can manage roles"
   ON public.user_roles FOR ALL
   TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
 -- RLS Policies for time_templates
+DROP POLICY IF EXISTS "Everyone can view active templates" ON public.time_templates;
 CREATE POLICY "Everyone can view active templates"
   ON public.time_templates FOR SELECT
   TO authenticated
   USING (is_active = true OR public.has_role(auth.uid(), 'admin'));
 
+DROP POLICY IF EXISTS "Only admins can manage templates" ON public.time_templates;
 CREATE POLICY "Only admins can manage templates"
   ON public.time_templates FOR ALL
   TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
 -- RLS Policies for time_entries
+DROP POLICY IF EXISTS "Users can view own time entries" ON public.time_entries;
 CREATE POLICY "Users can view own time entries"
   ON public.time_entries FOR SELECT
   TO authenticated
   USING (user_id = auth.uid() OR public.has_role(auth.uid(), 'admin'));
 
+DROP POLICY IF EXISTS "Users can create own time entries" ON public.time_entries;
 CREATE POLICY "Users can create own time entries"
   ON public.time_entries FOR INSERT
   TO authenticated
   WITH CHECK (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "Users can update own time entries" ON public.time_entries;
 CREATE POLICY "Users can update own time entries"
   ON public.time_entries FOR UPDATE
   TO authenticated
   USING (user_id = auth.uid() OR public.has_role(auth.uid(), 'admin'));
 
+DROP POLICY IF EXISTS "Admins can delete time entries" ON public.time_entries;
 CREATE POLICY "Admins can delete time entries"
   ON public.time_entries FOR DELETE
   TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
 -- RLS Policies for absences
+DROP POLICY IF EXISTS "Users can view own absences" ON public.absences;
 CREATE POLICY "Users can view own absences"
   ON public.absences FOR SELECT
   TO authenticated
   USING (user_id = auth.uid() OR public.has_role(auth.uid(), 'admin'));
 
+DROP POLICY IF EXISTS "Only admins can manage absences" ON public.absences;
 CREATE POLICY "Only admins can manage absences"
   ON public.absences FOR ALL
   TO authenticated
@@ -169,21 +192,25 @@ END;
 $$;
 
 -- Add triggers for updated_at
+DROP TRIGGER IF EXISTS set_updated_at_profiles ON public.profiles;
 CREATE TRIGGER set_updated_at_profiles
   BEFORE UPDATE ON public.profiles
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_updated_at();
 
+DROP TRIGGER IF EXISTS set_updated_at_time_templates ON public.time_templates;
 CREATE TRIGGER set_updated_at_time_templates
   BEFORE UPDATE ON public.time_templates
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_updated_at();
 
+DROP TRIGGER IF EXISTS set_updated_at_time_entries ON public.time_entries;
 CREATE TRIGGER set_updated_at_time_entries
   BEFORE UPDATE ON public.time_entries
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_updated_at();
 
+DROP TRIGGER IF EXISTS set_updated_at_absences ON public.absences;
 CREATE TRIGGER set_updated_at_absences
   BEFORE UPDATE ON public.absences
   FOR EACH ROW
@@ -213,6 +240,7 @@ END;
 $$;
 
 -- Trigger for auto-creating profile and role on signup
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW

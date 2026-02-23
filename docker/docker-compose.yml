@@ -115,6 +115,7 @@ services:
       timeout: 5s
       interval: 5s
       retries: 3
+      start_period: 30s
     depends_on:
       db:
         condition: service_healthy

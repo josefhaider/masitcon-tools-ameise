@@ -5,9 +5,17 @@ ALTER TABLE employee_work_schedules
   ADD COLUMN IF NOT EXISTS valid_to DATE;
 
 -- Add check constraint: valid_to must be after valid_from
-ALTER TABLE employee_work_schedules
-  ADD CONSTRAINT valid_period_check 
-  CHECK (valid_to IS NULL OR valid_to >= valid_from);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'valid_period_check'
+    AND conrelid = 'public.employee_work_schedules'::regclass
+  ) THEN
+    ALTER TABLE employee_work_schedules
+      ADD CONSTRAINT valid_period_check
+      CHECK (valid_to IS NULL OR valid_to >= valid_from);
+  END IF;
+END $$;
 
 -- Drop old unique constraint if exists
 ALTER TABLE employee_work_schedules 

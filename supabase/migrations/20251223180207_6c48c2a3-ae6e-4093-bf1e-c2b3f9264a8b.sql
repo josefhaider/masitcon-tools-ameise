@@ -1,5 +1,5 @@
 -- Create holidays table
-CREATE TABLE public.holidays (
+CREATE TABLE IF NOT EXISTS public.holidays (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   date DATE NOT NULL,
   name TEXT NOT NULL,
@@ -14,14 +14,17 @@ CREATE TABLE public.holidays (
 ALTER TABLE public.holidays ENABLE ROW LEVEL SECURITY;
 
 -- Everyone can view holidays
+DROP POLICY IF EXISTS "Everyone can view holidays" ON public.holidays;
 CREATE POLICY "Everyone can view holidays"
   ON public.holidays FOR SELECT USING (true);
 
 -- Only admins can manage holidays
+DROP POLICY IF EXISTS "Admins can manage holidays" ON public.holidays;
 CREATE POLICY "Admins can manage holidays"
   ON public.holidays FOR ALL USING (has_role(auth.uid(), 'admin'));
 
 -- Trigger for updated_at
+DROP TRIGGER IF EXISTS update_holidays_updated_at ON public.holidays;
 CREATE TRIGGER update_holidays_updated_at
   BEFORE UPDATE ON public.holidays
   FOR EACH ROW
@@ -43,4 +46,5 @@ INSERT INTO public.holidays (date, name, federal_state) VALUES
   ('2026-10-03', 'Tag der Deutschen Einheit', 'BY'),
   ('2026-11-01', 'Allerheiligen', 'BY'),
   ('2026-12-25', '1. Weihnachtstag', 'BY'),
-  ('2026-12-26', '2. Weihnachtstag', 'BY');
+  ('2026-12-26', '2. Weihnachtstag', 'BY')
+ON CONFLICT (date, federal_state) DO NOTHING;
