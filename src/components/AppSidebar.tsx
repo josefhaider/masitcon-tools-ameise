@@ -46,10 +46,10 @@ export function AppSidebar({ isAdmin, isApprover, isHrManager, activeView, onVie
     <Sidebar collapsible="icon">
       {/* Header with Logo */}
       <SidebarHeader className="h-[53px] flex items-center px-2 border-b">
-        <img 
-          src={masitconLogo} 
-          alt="masitcon" 
-          className="h-8 w-auto transition-all duration-200"
+        <img
+          src={masitconLogo}
+          alt="masitcon"
+          className="h-8 w-auto object-contain [image-rendering:auto] transition-[width] duration-200"
         />
       </SidebarHeader>
 

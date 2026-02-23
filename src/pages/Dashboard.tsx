@@ -99,7 +99,7 @@ const Dashboard = () => {
 
   return (
     <SidebarProvider>
-      <div className="flex min-h-screen w-full bg-gradient-to-br from-background to-muted overflow-x-hidden">
+      <div className="flex min-h-screen w-full bg-gradient-to-br from-background to-muted">
         <AppSidebar 
           isAdmin={isAdmin} 
           isApprover={isApprover}
