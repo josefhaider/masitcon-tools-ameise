@@ -1121,20 +1121,35 @@ collect_config() {
     local start_db="${DEPLOY_DB_PORT:-5440}"
     local start_studio="${DEPLOY_STUDIO_PORT:-3100}"
 
-    # Wenn Port von eigenem Stack belegt: behalten. Sonst freien Port suchen.
-    if is_port_used_by_our_stack "$start_app"; then DEPLOY_APP_PORT="$start_app"
-    else DEPLOY_APP_PORT=$(find_free_port "$start_app"); [ -z "$DEPLOY_APP_PORT" ] && DEPLOY_APP_PORT="$start_app"; fi
+    # Port-Suche: Nur bei Ersteinrichtung (kein gespeicherter Wert).
+    # Bei Reconfigure/Update: gespeicherten Port IMMER behalten – is_port_used_by_our_stack()
+    # erkennt network_mode:host Container nicht via Docker-Bindings, was sonst
+    # fälschlicherweise einen neuen Port vergeben würde.
+    if [ -z "${DEPLOY_APP_PORT:-}" ]; then
+        DEPLOY_APP_PORT=$(find_free_port "$start_app"); [ -z "$DEPLOY_APP_PORT" ] && DEPLOY_APP_PORT="$start_app"
+    else
+        DEPLOY_APP_PORT="$start_app"
+    fi
 
-    if is_port_used_by_our_stack "$start_api"; then DEPLOY_API_PORT="$start_api"
-    else DEPLOY_API_PORT=$(find_free_port "$start_api"); [ -z "$DEPLOY_API_PORT" ] && DEPLOY_API_PORT="$start_api"; fi
+    if [ -z "${DEPLOY_API_PORT:-}" ]; then
+        DEPLOY_API_PORT=$(find_free_port "$start_api"); [ -z "$DEPLOY_API_PORT" ] && DEPLOY_API_PORT="$start_api"
+    else
+        DEPLOY_API_PORT="$start_api"
+    fi
 
-    if is_port_used_by_our_stack "$start_db"; then DEPLOY_DB_PORT="$start_db"
-    else DEPLOY_DB_PORT=$(find_free_port "$start_db"); [ -z "$DEPLOY_DB_PORT" ] && DEPLOY_DB_PORT="$start_db"; fi
+    if [ -z "${DEPLOY_DB_PORT:-}" ]; then
+        DEPLOY_DB_PORT=$(find_free_port "$start_db"); [ -z "$DEPLOY_DB_PORT" ] && DEPLOY_DB_PORT="$start_db"
+    else
+        DEPLOY_DB_PORT="$start_db"
+    fi
 
-    if is_port_used_by_our_stack "$start_studio"; then DEPLOY_STUDIO_PORT="$start_studio"
-    else DEPLOY_STUDIO_PORT=$(find_free_port "$start_studio"); [ -z "$DEPLOY_STUDIO_PORT" ] && DEPLOY_STUDIO_PORT="$start_studio"; fi
+    if [ -z "${DEPLOY_STUDIO_PORT:-}" ]; then
+        DEPLOY_STUDIO_PORT=$(find_free_port "$start_studio"); [ -z "$DEPLOY_STUDIO_PORT" ] && DEPLOY_STUDIO_PORT="$start_studio"
+    else
+        DEPLOY_STUDIO_PORT="$start_studio"
+    fi
 
-    echo "  Gefundene freie Ports:"
+    echo "  Ports (gespeicherte Werte werden beibehalten):"
     printf "    %-30s %s" "App (serve):" "$DEPLOY_APP_PORT"
     is_port_free "$DEPLOY_APP_PORT" && echo -e "  ${GREEN}frei${NC}" || echo -e "  ${RED}BELEGT${NC}"
     printf "    %-30s %s" "Supabase API (Kong):" "$DEPLOY_API_PORT"
