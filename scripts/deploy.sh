@@ -1263,14 +1263,19 @@ DEPLOYENV
 }
 
 wait_for_health() {
-    info "Warte auf Health-Check (max 120s)..."
+    info "Warte auf Health-Check (max 180s)..."
     local DC="$1" compose_file="$2" env_file="$3"
+    local project="${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}"
     local i=0
-    while [ $i -lt 120 ]; do
-        local healthy running
-        healthy=$($DC --env-file "$env_file" -f "$compose_file" ps 2>/dev/null | grep -c "healthy" || true)
+    # Warte explizit bis DB *und* Auth-Container (GoTrue) healthy sind.
+    # GoTrue führt beim Start eigene Migrationen auf auth.users durch – läuft
+    # do_migrate() vorher, entstehen Deadlocks auf auth.users (Race Condition).
+    while [ $i -lt 180 ]; do
+        local db_healthy auth_healthy running
+        db_healthy=$(docker inspect --format='{{.State.Health.Status}}' "${project}-db" 2>/dev/null || echo "")
+        auth_healthy=$(docker inspect --format='{{.State.Health.Status}}' "${project}-auth" 2>/dev/null || echo "")
         running=$($DC --env-file "$env_file" -f "$compose_file" ps 2>/dev/null | grep -c "Up" || true)
-        if [ "${healthy:-0}" -ge 2 ] || [ "${running:-0}" -ge 4 ]; then
+        if [ "$db_healthy" = "healthy" ] && [ "$auth_healthy" = "healthy" ]; then
             log "Stack gestartet (${running} Container laufen)"
             return 0
         fi
