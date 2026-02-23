@@ -130,21 +130,29 @@ _show_db_crash_logs() {
 
 # Baut Docker-Images mit vollem Output (--progress=plain) und zeigt bei Fehler
 # die letzten 60 Zeilen des Build-Logs für schnelle Diagnose.
-# Aufruf: _build_stack DC COMPOSE_FILE SECRETS_FILE [service1 service2 ...]
+# Aufruf: _build_stack DC COMPOSE_FILE SECRETS_FILE [--no-cache] [service1 service2 ...]
 _build_stack() {
     local dc="$1" compose_file="$2" secrets_file="$3"
     shift 3
-    local services=("$@")   # leer = alle Services
+    local no_cache_flag=""
+    local services=()
+    for arg in "$@"; do
+        if [ "$arg" = "--no-cache" ]; then
+            no_cache_flag="--no-cache"
+        else
+            services+=("$arg")
+        fi
+    done
 
     local build_log; build_log="${DIR_BASE}/build-$(date +%Y%m%d-%H%M%S).log"
 
     info "Baue Docker-Images (Log: ${build_log})..."
     if [ ${#services[@]} -gt 0 ]; then
         $dc --env-file "$secrets_file" -f "$compose_file" \
-            build --progress=plain "${services[@]}" 2>&1 | tee "$build_log"
+            build --progress=plain $no_cache_flag "${services[@]}" 2>&1 | tee "$build_log"
     else
         $dc --env-file "$secrets_file" -f "$compose_file" \
-            build --progress=plain 2>&1 | tee "$build_log"
+            build --progress=plain $no_cache_flag 2>&1 | tee "$build_log"
     fi
 
     local build_exit=${PIPESTATUS[0]}
@@ -1600,9 +1608,9 @@ do_update() {
     info "Prüfe und wende neue Datenbankmigrationen an..."
     do_migrate || { err "Migrationen fehlgeschlagen – Update abgebrochen"; exit 1; }
 
-    # App-Container neu bauen (VITE_* aus secrets.env)
+    # App-Container neu bauen – --no-cache damit alte fehlerhafte Layer nicht wiederverwendet werden
     info "Baue App-Container neu (VITE_SUPABASE_URL wird neu eingebettet)..."
-    _build_stack "$DC" "$COMPOSE_FILE" "$SECRETS_FILE" app \
+    _build_stack "$DC" "$COMPOSE_FILE" "$SECRETS_FILE" --no-cache app \
         || { _show_db_crash_logs; exit 1; }
 
     # Alle Container starten (app wurde oben schon gebaut)

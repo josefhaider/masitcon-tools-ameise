@@ -20,8 +20,14 @@ ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
 ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
 # Verhindert OOM-Kill auf Servern mit wenig RAM (Node beansprucht sonst >2GB)
 ENV NODE_OPTIONS="--max-old-space-size=1536"
-# BUILD_MODE von \r befreien (CRLF-Schutz bei Windows-generierten env-Dateien)
-RUN BUILD_MODE=$(printf '%s' "${BUILD_MODE}" | tr -d '\r\n') && npm run build:${BUILD_MODE}
+# WICHTIG: ${BUILD_MODE} NICHT direkt in npm run verwenden – Docker substituiert ARG-Variablen
+# BEVOR die Shell läuft, d.h. ein \r im Wert landet direkt im Befehl und tr hilft nicht mehr.
+# Case-Statement: der saubere BUILD_MODE-Wert (nach tr) wählt den Befehl, nicht der ARG-Wert.
+RUN BM=$(printf '%s' "${BUILD_MODE}" | tr -d '[:space:]'); \
+    case "$BM" in \
+        staging) npm run build:staging ;; \
+        *)       npm run build:production ;; \
+    esac
 
 # Produktions-Stage
 FROM node:20-alpine
