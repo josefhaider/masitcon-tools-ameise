@@ -172,7 +172,7 @@ Modi:
   --check-ports      Ports prüfen (Supabase) – zeigt Belegung, bietet Alternativen
   --reconfigure      Bestehende Einstellungen laden, ändern und neu deployen
   --sync-migrations  Migrationen als angewendet markieren (ohne Ausführung)
-  --setup-nginx      Nginx-Configs für Production + Staging erstellen und nach /etc/nginx/sites-enabled/ kopieren
+  --setup-nginx      Nginx-Configs nach sites-available kopieren + Symlinks in sites-enabled
 
 Optionen:
   --env production|staging    Ziel-Umgebung (Default: production)
@@ -1704,8 +1704,16 @@ do_setup_nginx() {
 
     load_or_init_dirs
 
-    local nginx_sites="${NGINX_SITES_ENABLED:-/etc/nginx/sites-enabled}"
+    local nginx_available="${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}"
+    local nginx_enabled="${NGINX_SITES_ENABLED:-/etc/nginx/sites-enabled}"
     local has_any=false
+
+    for dir in "$nginx_available" "$nginx_enabled"; do
+        if [ ! -d "$dir" ]; then
+            info "Verzeichnis ${dir} existiert nicht – erstelle mit sudo..."
+            sudo mkdir -p "$dir" || { err "Konnte ${dir} nicht anlegen"; exit 1; }
+        fi
+    done
 
     for env in production staging; do
         local cfg="${DIR_BASE}/config.env.${env}"
@@ -1718,23 +1726,36 @@ do_setup_nginx() {
         generate_nginx_config "$env"
         local conf_file="${DIR_BASE}/${env}/configs/nginx-${env}.conf"
         local target_name="${PROJECT_NAME}-${env}.conf"
-        local target_link="${nginx_sites}/${target_name}"
+        local file_available="${nginx_available}/${target_name}"
+        local link_enabled="${nginx_enabled}/${target_name}"
 
         if [ ! -f "$conf_file" ]; then
             err "Nginx-Config nicht erstellt: ${conf_file}"
             continue
         fi
 
-        if [ -L "$target_link" ] || [ -f "$target_link" ]; then
-            sudo rm -f "$target_link"
+        # 1. Kopiere nach sites-available
+        info "Kopiere ${conf_file} → ${file_available}"
+        if ! sudo cp -f "$conf_file" "$file_available"; then
+            err "Kopieren fehlgeschlagen: ${file_available}"
+            continue
         fi
-        sudo ln -sf "$conf_file" "$target_link" || { err "Symlink fehlgeschlagen: ${target_link}"; continue; }
-        log "Nginx ${env}: ${target_link} → ${conf_file}"
-        has_any=true
+
+        # 2. Symlink in sites-enabled → sites-available (Ubuntu/Debian-Standard)
+        if [ -L "$link_enabled" ] || [ -f "$link_enabled" ]; then
+            sudo rm -f "$link_enabled"
+        fi
+        if sudo ln -sf "$file_available" "$link_enabled"; then
+            log "Nginx ${env}: ${file_available} + Symlink in sites-enabled"
+            has_any=true
+        else
+            warn "Symlink fehlgeschlagen – Config liegt in sites-available, manuell aktivieren: sudo ln -s ${file_available} ${link_enabled}"
+            has_any=true
+        fi
     done
 
     if [ "$has_any" = false ]; then
-        err "Keine Nginx-Config erstellt. Zuerst Setup ausführen: bash scripts/deploy.sh --env production"
+        err "Keine Nginx-Config kopiert. Zuerst Setup ausführen: bash scripts/deploy.sh --env production"
         exit 1
     fi
 
@@ -1749,8 +1770,8 @@ do_setup_nginx() {
     fi
 
     echo ""
-    info "Configs: ${DIR_BASE}/{production,staging}/configs/nginx-*.conf"
-    info "Symlinks: ${nginx_sites}/${PROJECT_NAME}-*.conf"
+    info "Configs: ${nginx_available}/${PROJECT_NAME}-*.conf"
+    info "Symlinks: ${nginx_enabled}/${PROJECT_NAME}-*.conf → sites-available"
 }
 
 do_backup() {
