@@ -2007,11 +2007,12 @@ do_setup_nginx() {
 
     for env in $envs_to_process; do
         local cfg="${DIR_BASE}/config.env.${env}"
-        [ -f "$cfg" ] || cfg="${DIR_BASE}/config.env"
+        # KEIN Fallback auf config.env – sonst würde Staging die Production-Config
+        # verwenden und eine nginx-Config mit identischem server_name erzeugen → Konflikt.
         if [ ! -f "$cfg" ]; then
             warn "Keine Config für ${env} – überspringe"
             info "  Zuerst Setup ausführen: bash scripts/deploy.sh --env ${env}"
-            info "  Erwarteter Pfad: ${DIR_BASE}/config.env.${env}"
+            info "  Erwarteter Pfad: ${cfg}"
             continue
         fi
 
