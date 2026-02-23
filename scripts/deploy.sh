@@ -90,6 +90,14 @@ find_free_port() {
     echo "$port"
 }
 
+# Prüft ob Port von unserem eigenen Stack belegt ist (Reconfigure/Update)
+is_port_used_by_our_stack() {
+    local port="$1"
+    local prefix="${DEPLOY_COMPOSE_PROJECT:-${PROJECT_NAME}-${ENV_TARGET}}"
+    local occ; occ=$(get_port_occupant "$port" 2>/dev/null)
+    [[ "$occ" == "Docker: ${prefix}-"* ]]
+}
+
 detect_compose() {
     if docker compose version >/dev/null 2>&1; then echo "docker compose"
     elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"
@@ -989,17 +997,18 @@ collect_config() {
     local start_db="${DEPLOY_DB_PORT:-5440}"
     local start_studio="${DEPLOY_STUDIO_PORT:-3100}"
 
-    DEPLOY_APP_PORT=$(find_free_port "$start_app")
-    [ -z "$DEPLOY_APP_PORT" ] && DEPLOY_APP_PORT="$start_app"
+    # Wenn Port von eigenem Stack belegt: behalten. Sonst freien Port suchen.
+    if is_port_used_by_our_stack "$start_app"; then DEPLOY_APP_PORT="$start_app"
+    else DEPLOY_APP_PORT=$(find_free_port "$start_app"); [ -z "$DEPLOY_APP_PORT" ] && DEPLOY_APP_PORT="$start_app"; fi
 
-    DEPLOY_API_PORT=$(find_free_port "$start_api")
-    [ -z "$DEPLOY_API_PORT" ] && DEPLOY_API_PORT="$start_api"
+    if is_port_used_by_our_stack "$start_api"; then DEPLOY_API_PORT="$start_api"
+    else DEPLOY_API_PORT=$(find_free_port "$start_api"); [ -z "$DEPLOY_API_PORT" ] && DEPLOY_API_PORT="$start_api"; fi
 
-    DEPLOY_DB_PORT=$(find_free_port "$start_db")
-    [ -z "$DEPLOY_DB_PORT" ] && DEPLOY_DB_PORT="$start_db"
+    if is_port_used_by_our_stack "$start_db"; then DEPLOY_DB_PORT="$start_db"
+    else DEPLOY_DB_PORT=$(find_free_port "$start_db"); [ -z "$DEPLOY_DB_PORT" ] && DEPLOY_DB_PORT="$start_db"; fi
 
-    DEPLOY_STUDIO_PORT=$(find_free_port "$start_studio")
-    [ -z "$DEPLOY_STUDIO_PORT" ] && DEPLOY_STUDIO_PORT="$start_studio"
+    if is_port_used_by_our_stack "$start_studio"; then DEPLOY_STUDIO_PORT="$start_studio"
+    else DEPLOY_STUDIO_PORT=$(find_free_port "$start_studio"); [ -z "$DEPLOY_STUDIO_PORT" ] && DEPLOY_STUDIO_PORT="$start_studio"; fi
 
     echo "  Gefundene freie Ports:"
     printf "    %-30s %s" "App (serve):" "$DEPLOY_APP_PORT"
@@ -1021,13 +1030,19 @@ collect_config() {
         DEPLOY_STUDIO_PORT=$(ask "  Studio" "$DEPLOY_STUDIO_PORT")
     fi
 
-    # Belegte Ports als Fehler
+    # Belegte Ports prüfen – eigene Container sind erlaubt (Reconfigure/Update)
+    local _prefix="${DEPLOY_COMPOSE_PROJECT:-${PROJECT_NAME}-${ENV_TARGET}}"
     for _p in "$DEPLOY_APP_PORT" "$DEPLOY_API_PORT" "$DEPLOY_DB_PORT" "$DEPLOY_STUDIO_PORT"; do
         if ! is_port_free "$_p"; then
             local _occ; _occ=$(get_port_occupant "$_p")
-            err "Port $_p ist belegt: $_occ"
-            err "Stoppe den Prozess oder wähle einen anderen Port."
-            exit 1
+            # Eigenen Stack erlauben (z.B. Docker: masitcon-tools-ameise-staging-kong)
+            if [[ "$_occ" == "Docker: ${_prefix}-"* ]]; then
+                info "Port $_p: von eigenem Stack belegt – OK für Reconfigure/Update"
+            else
+                err "Port $_p ist belegt: $_occ"
+                err "Stoppe den Prozess oder wähle einen anderen Port."
+                exit 1
+            fi
         fi
     done
 
