@@ -136,8 +136,9 @@ while [[ $# -gt 0 ]]; do
         --prune)   MODE="prune";   shift ;;
         --migrate)      MODE="migrate";      shift ;;
         --backup)       MODE="backup";       shift ;;
-        --check-ports)  MODE="check-ports";  shift ;;
-        --reconfigure)  MODE="reconfigure";  shift ;;
+        --check-ports)   MODE="check-ports";   shift ;;
+        --reconfigure)   MODE="reconfigure";   shift ;;
+        --sync-migrations) MODE="sync-migrations"; shift ;;
         --env)      ENV_TARGET="${2:-production}"; ENV_EXPLICIT=true; shift 2 ;;
         --base-dir) CLI_BASE_DIR="${2:-}"; shift 2 ;;
         --service)  SHOW_LOGS_SERVICE="${2:-}"; shift 2 ;;
@@ -160,6 +161,7 @@ Modi:
   --prune            Docker-System aufräumen (ungenutzte Images/Volumes)
   --check-ports      Ports prüfen (Supabase) – zeigt Belegung, bietet Alternativen
   --reconfigure      Bestehende Einstellungen laden, ändern und neu deployen
+  --sync-migrations  Migrationen als angewendet markieren (ohne Ausführung)
 
 Optionen:
   --env production|staging    Ziel-Umgebung (Default: production)
@@ -1098,48 +1100,48 @@ write_env_file() {
 # ${PROJECT_DISPLAY} – Supabase-Schlüssel
 # Generiert am $(date '+%Y-%m-%d %H:%M') – NIEMALS committen!
 # Wird von docker/docker-compose.yml über --env-file eingelesen.
-COMPOSE_PROJECT_NAME=${DEPLOY_COMPOSE_PROJECT}
+COMPOSE_PROJECT_NAME="${DEPLOY_COMPOSE_PROJECT}"
 
 # Supabase-Schlüssel
-JWT_SECRET=${DEPLOY_JWT_SECRET}
-POSTGRES_PASSWORD=${DEPLOY_POSTGRES_PASSWORD}
-ANON_KEY=${DEPLOY_ANON_KEY}
-SERVICE_ROLE_KEY=${DEPLOY_SERVICE_ROLE_KEY}
-PG_META_CRYPTO_KEY=${DEPLOY_PG_META_CRYPTO_KEY}
+JWT_SECRET="${DEPLOY_JWT_SECRET}"
+POSTGRES_PASSWORD="${DEPLOY_POSTGRES_PASSWORD}"
+ANON_KEY="${DEPLOY_ANON_KEY}"
+SERVICE_ROLE_KEY="${DEPLOY_SERVICE_ROLE_KEY}"
+PG_META_CRYPTO_KEY="${DEPLOY_PG_META_CRYPTO_KEY}"
 
 # Ports (alle 127.0.0.1)
-APP_PORT=${DEPLOY_APP_PORT}
-API_PORT=${DEPLOY_API_PORT}
-DB_PORT=${DEPLOY_DB_PORT}
-STUDIO_PORT=${DEPLOY_STUDIO_PORT}
+APP_PORT="${DEPLOY_APP_PORT}"
+API_PORT="${DEPLOY_API_PORT}"
+DB_PORT="${DEPLOY_DB_PORT}"
+STUDIO_PORT="${DEPLOY_STUDIO_PORT}"
 
 # URLs (automatisch aus Domain berechnet)
-SITE_URL=${_SITE_URL}
-SITE_HOSTNAME=${_SITE_HOSTNAME}
-API_EXTERNAL_URL=${_API_EXTERNAL_URL}
-VITE_SUPABASE_URL=${_VITE_SUPABASE_URL}
+SITE_URL="${_SITE_URL}"
+SITE_HOSTNAME="${_SITE_HOSTNAME}"
+API_EXTERNAL_URL="${_API_EXTERNAL_URL}"
+VITE_SUPABASE_URL="${_VITE_SUPABASE_URL}"
 
 # Build
-BUILD_MODE=${ENV_TARGET}
+BUILD_MODE="${ENV_TARGET}"
 
 # Docker-Netzwerk
-DOCKER_SUBNET=${DEPLOY_DOCKER_SUBNET}
+DOCKER_SUBNET="${DEPLOY_DOCKER_SUBNET}"
 
 # Edge Functions
-DATA_TRANSFER_PASSWORD=${DEPLOY_DATA_TRANSFER_PASSWORD}
-ALLOWED_ORIGIN=${_SITE_URL}
+DATA_TRANSFER_PASSWORD="${DEPLOY_DATA_TRANSFER_PASSWORD}"
+ALLOWED_ORIGIN="${_SITE_URL}"
 
-# Supabase Studio – Anzeigename
-STUDIO_DEFAULT_ORGANIZATION=${studio_org}
-STUDIO_DEFAULT_PROJECT=${studio_project}
+# Supabase Studio – Anzeigename (Leerzeichen in Werten)
+STUDIO_DEFAULT_ORGANIZATION="${studio_org}"
+STUDIO_DEFAULT_PROJECT="${studio_project}"
 
 # SMTP (leer = keine E-Mails)
-SMTP_HOST=${SMTP_HOST}
-SMTP_PORT=${SMTP_PORT}
-SMTP_USER=${SMTP_USER}
-SMTP_PASS=${SMTP_PASS}
-SMTP_ADMIN_EMAIL=${SMTP_ADMIN_EMAIL}
-SMTP_SENDER_NAME=${SMTP_SENDER_NAME}
+SMTP_HOST="${SMTP_HOST}"
+SMTP_PORT="${SMTP_PORT}"
+SMTP_USER="${SMTP_USER}"
+SMTP_PASS="${SMTP_PASS}"
+SMTP_ADMIN_EMAIL="${SMTP_ADMIN_EMAIL}"
+SMTP_SENDER_NAME="${SMTP_SENDER_NAME}"
 SECRETSENV
     chmod 600 "$secrets_file"
     log "Secrets gespeichert: ${secrets_file}"
@@ -1618,6 +1620,54 @@ do_migrate() {
     fi
 }
 
+do_sync_migrations() {
+    header "Migrationen synchronisieren – ${PROJECT_DISPLAY} (${ENV_TARGET})"
+
+    load_or_init_dirs
+    local sf; sf=$(get_secrets_file)
+    [ -z "$sf" ] && { err "secrets.env nicht gefunden – zuerst Server-Setup ausführen"; exit 1; }
+    # shellcheck source=/dev/null
+    source "$sf"
+
+    local container="${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}-db"
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
+        err "DB-Container '${container}' läuft nicht"
+        info "Stack starten: bash scripts/deploy.sh --update --env ${ENV_TARGET}"
+        exit 1
+    fi
+
+    docker exec "$container" psql -U postgres -d postgres -c \
+        "CREATE TABLE IF NOT EXISTS public._applied_migrations (
+            version text PRIMARY KEY,
+            applied_at timestamptz DEFAULT now()
+         );" > /dev/null 2>&1 \
+        || { err "Konnte _applied_migrations Tabelle nicht erstellen"; exit 1; }
+
+    local migrations_dir="${DIR_APP}/supabase/migrations"
+    if [ ! -d "$migrations_dir" ]; then
+        err "Migrations-Verzeichnis nicht gefunden: ${migrations_dir}"
+        exit 1
+    fi
+
+    local sql_files; sql_files=$(ls "${migrations_dir}"/*.sql 2>/dev/null | sort)
+    if [ -z "$sql_files" ]; then
+        info "Keine SQL-Dateien in ${migrations_dir} gefunden"
+        return 0
+    fi
+
+    info "Markiere alle Migrationen als angewendet (ohne Ausführung)..."
+    local count=0
+    for f in $sql_files; do
+        local version; version=$(basename "$f")
+        docker exec "$container" psql -U postgres -d postgres -c \
+            "INSERT INTO public._applied_migrations (version) VALUES ('${version}') ON CONFLICT DO NOTHING;" \
+            > /dev/null 2>&1
+        count=$((count + 1))
+    done
+
+    log "Fertig: ${count} Migrationen als angewendet markiert"
+}
+
 do_backup() {
     header "Backup"
     check_supabase_cli
@@ -1727,7 +1777,7 @@ main() {
 
     # Umgebung abfragen, wenn für diesen Modus nötig und nicht per --env gesetzt
     case "$MODE" in
-        update|status|logs|stop|restart|clean|backup|reconfigure)
+        update|status|logs|stop|restart|clean|backup|reconfigure|sync-migrations)
             ask_env_target
             echo -e "  ${DIM}Umgebung: ${ENV_TARGET}${NC}"
             echo ""
@@ -1746,8 +1796,9 @@ main() {
         migrate)      do_migrate      ;;
         backup)       do_backup       ;;
         check-ports)  do_check_ports  ;;
-        reconfigure)  do_reconfigure  ;;
-        setup)        setup_server    ;;
+        reconfigure)     do_reconfigure     ;;
+        sync-migrations) do_sync_migrations ;;
+        setup)           setup_server       ;;
     esac
 }
 
