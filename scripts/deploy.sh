@@ -115,6 +115,7 @@ bytes_human() {
 
 # ─── Projekt-Konstanten ──────────────────────────────────────────
 PROJECT_NAME="masitcon-tools-ameise"
+NGINX_SITE_NAME="ameise"
 PROJECT_DISPLAY="masitcon Zeiterfassung (Ameise)"
 NODE_VERSION="20"
 APP_FRAMEWORK="vite"
@@ -1233,7 +1234,7 @@ generate_nginx_config() {
 #   ${DEPLOY_DOMAIN}/supabase/*  → Supabase Kong (Port ${DEPLOY_API_PORT})
 #
 # Einbinden:
-#   sudo ln -s ${conf_file} /etc/nginx/sites-enabled/${PROJECT_NAME}-${target_env}.conf
+#   sudo ln -s ${conf_file} /etc/nginx/sites-enabled/${NGINX_SITE_NAME}-${target_env}.conf
 #   sudo nginx -t && sudo systemctl reload nginx
 # ─────────────────────────────────────────────────────────────
 
@@ -1241,8 +1242,8 @@ server {
 ${ssl_block}
     server_name ${DEPLOY_DOMAIN};
 
-    access_log ${log_dir}/${PROJECT_NAME}-${target_env}-access.log;
-    error_log  ${log_dir}/${PROJECT_NAME}-${target_env}-error.log;
+    access_log ${log_dir}/${NGINX_SITE_NAME}-${target_env}-access.log;
+    error_log  ${log_dir}/${NGINX_SITE_NAME}-${target_env}-error.log;
 
     # ── Supabase API (Kong) – /supabase/* → Kong ─────────────
     # Der /supabase-Präfix wird vor der Weiterleitung entfernt.
@@ -1355,7 +1356,7 @@ setup_server() {
     echo ""
     echo -e "  ${BOLD}Nächste Schritte:${NC}"
     echo "    1. Nginx-Konfiguration einbinden:"
-    echo "       sudo ln -s ${DIR_CONFIGS}/nginx-${ENV_TARGET}.conf /etc/nginx/sites-enabled/${PROJECT_NAME}-${ENV_TARGET}.conf"
+    echo "       sudo ln -s ${DIR_CONFIGS}/nginx-${ENV_TARGET}.conf /etc/nginx/sites-enabled/${NGINX_SITE_NAME}-${ENV_TARGET}.conf"
     echo "       sudo nginx -t && sudo systemctl reload nginx"
     echo ""
     echo "    2. Studio via SSH-Tunnel:"
@@ -1719,13 +1720,15 @@ do_setup_nginx() {
         local cfg="${DIR_BASE}/config.env.${env}"
         [ -f "$cfg" ] || cfg="${DIR_BASE}/config.env"
         if [ ! -f "$cfg" ]; then
-            warn "Keine Config für ${env} – überspringe (${DIR_BASE}/config.env.${env} oder config.env)"
+            warn "Keine Config für ${env} – überspringe"
+            info "  Zuerst Setup ausführen: bash scripts/deploy.sh --env ${env}"
+            info "  Erwarteter Pfad: ${DIR_BASE}/config.env.${env}"
             continue
         fi
 
         generate_nginx_config "$env"
         local conf_file="${DIR_BASE}/${env}/configs/nginx-${env}.conf"
-        local target_name="${PROJECT_NAME}-${env}.conf"
+        local target_name="${NGINX_SITE_NAME}-${env}.conf"
         local file_available="${nginx_available}/${target_name}"
         local link_enabled="${nginx_enabled}/${target_name}"
 
@@ -1755,7 +1758,10 @@ do_setup_nginx() {
     done
 
     if [ "$has_any" = false ]; then
-        err "Keine Nginx-Config kopiert. Zuerst Setup ausführen: bash scripts/deploy.sh --env production"
+        err "Keine Nginx-Config kopiert."
+        info "Zuerst Setup ausführen: bash scripts/deploy.sh --env production"
+        info "Oder Reconfigure: bash scripts/deploy.sh --reconfigure --env production"
+        info "Erwartete Config-Dateien: ${DIR_BASE}/config.env.production bzw. config.env.staging"
         exit 1
     fi
 
@@ -1770,8 +1776,8 @@ do_setup_nginx() {
     fi
 
     echo ""
-    info "Configs: ${nginx_available}/${PROJECT_NAME}-*.conf"
-    info "Symlinks: ${nginx_enabled}/${PROJECT_NAME}-*.conf → sites-available"
+    info "Configs: ${nginx_available}/${NGINX_SITE_NAME}-*.conf"
+    info "Symlinks: ${nginx_enabled}/${NGINX_SITE_NAME}-*.conf → sites-available"
 }
 
 do_backup() {
