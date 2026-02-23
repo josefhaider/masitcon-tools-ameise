@@ -1214,8 +1214,8 @@ SITE_HOSTNAME="${_SITE_HOSTNAME}"
 API_EXTERNAL_URL="${_API_EXTERNAL_URL}"
 VITE_SUPABASE_URL="${_VITE_SUPABASE_URL}"
 
-# Build
-BUILD_MODE="${ENV_TARGET}"
+# Build (kein \r – CRLF-Schutz)
+BUILD_MODE="${ENV_TARGET//[$'\r']/}"
 
 # Docker-Netzwerk
 DOCKER_SUBNET="${DEPLOY_DOCKER_SUBNET}"
@@ -1236,6 +1236,12 @@ SMTP_PASS="${SMTP_PASS}"
 SMTP_ADMIN_EMAIL="${SMTP_ADMIN_EMAIL}"
 SMTP_SENDER_NAME="${SMTP_SENDER_NAME}"
 SECRETSENV
+    # CRLF → LF normalisieren (Schutz wenn deploy.sh mit Windows-Zeilenenden läuft)
+    if command -v dos2unix >/dev/null 2>&1; then
+        dos2unix "$secrets_file" 2>/dev/null
+    else
+        sed -i 's/\r//' "$secrets_file" 2>/dev/null || true
+    fi
     chmod 600 "$secrets_file"
     log "Secrets gespeichert: ${secrets_file}"
 
