@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { Clock } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { AuthLayout } from '@/components/AuthLayout';
+import { AuthCardFooter } from '@/components/AuthCardFooter';
 
 // Verarbeitet alle GoTrue Callbacks (Password-Recovery, E-Mail-Bestätigung, etc.)
 // GoTrue leitet nach diesem Muster weiter:
@@ -14,7 +16,6 @@ const AuthCallback = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Prüfe ob GoTrue einen Fehler zurückgegeben hat (z.B. Token abgelaufen)
     const searchParams = new URLSearchParams(window.location.search);
     const hashParams = new URLSearchParams(window.location.hash.substring(1));
 
@@ -26,8 +27,6 @@ const AuthCallback = () => {
       return;
     }
 
-    // Supabase JS v2 verarbeitet token_hash/code/access_token automatisch via detectSessionInUrl.
-    // Wir warten auf onAuthStateChange um das Ergebnis zu kennen und reagieren entsprechend.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY') {
         navigate('/auth/new-password', { replace: true });
@@ -38,7 +37,6 @@ const AuthCallback = () => {
       }
     });
 
-    // Timeout-Fallback: Falls kein Event kommt (ungültiger Token, bereits verbraucht, etc.)
     const timeout = setTimeout(() => {
       setError('Der Link ist ungültig oder abgelaufen. Bitte fordern Sie einen neuen an.');
     }, 8000);
@@ -49,32 +47,52 @@ const AuthCallback = () => {
     };
   }, [navigate]);
 
-  if (error) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-masitcon-darkblue via-masitcon-lightblue to-masitcon-turquoise p-4">
-        <div className="text-center max-w-md">
-          <div className="rounded-xl bg-white/10 border border-white/20 p-8">
-            <p className="text-white text-lg font-semibold mb-2">Link ungültig</p>
-            <p className="text-white/70 text-sm mb-6">{error}</p>
-            <a
-              href="/auth"
-              className="inline-block rounded-lg bg-white/20 hover:bg-white/30 text-white px-6 py-2 transition-colors"
-            >
-              Zurück zur Anmeldung
-            </a>
+  return (
+    <AuthLayout>
+      <div className="w-full max-w-sm">
+        <div className="rounded-2xl bg-white/95 backdrop-blur-xl shadow-2xl overflow-hidden">
+          {/* Mascot + Titel */}
+          <div className="flex flex-col items-center pt-8 pb-6 px-8">
+            <img
+              src="/Ameise.png"
+              alt="Ameise"
+              className="mb-2 h-56 w-auto object-contain drop-shadow-xl"
+            />
+            <h1 className="text-2xl font-bold tracking-widest text-gray-800 uppercase">
+              Ameise
+            </h1>
+            <p className="mt-0.5 text-xs text-gray-500 tracking-wide">
+              Masitcon Zeiterfassung
+            </p>
           </div>
+
+          {/* Status-Bereich */}
+          <div className="px-8 pb-8">
+            {error ? (
+              <div className="space-y-4 text-center">
+                <div className="rounded-xl bg-red-50 border border-red-200 p-4">
+                  <p className="text-sm font-semibold text-red-700 mb-1">Link ungültig</p>
+                  <p className="text-xs text-red-600">{error}</p>
+                </div>
+                <a
+                  href="/auth"
+                  className="block text-xs text-gray-500 hover:text-masitcon-turquoise transition-colors"
+                >
+                  ← Zurück zur Anmeldung
+                </a>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-3 py-2">
+                <Loader2 className="h-8 w-8 animate-spin text-masitcon-turquoise" />
+                <p className="text-sm text-gray-500">Einen Moment bitte...</p>
+              </div>
+            )}
+          </div>
+
+          <AuthCardFooter />
         </div>
       </div>
-    );
-  }
-
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-masitcon-darkblue via-masitcon-lightblue to-masitcon-turquoise p-4">
-      <div className="text-center">
-        <Clock className="mx-auto h-12 w-12 animate-spin text-white" />
-        <p className="mt-4 text-white">Einen Moment bitte...</p>
-      </div>
-    </div>
+    </AuthLayout>
   );
 };
 
