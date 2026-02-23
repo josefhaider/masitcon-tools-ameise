@@ -99,6 +99,22 @@ is_port_used_by_our_stack() {
     [[ "$occ" == "Docker: ${prefix}-"* ]]
 }
 
+# Prüft ob POSTGRES_PASSWORD in der secrets.env gesetzt ist – bricht ab wenn leer
+_check_postgres_password() {
+    local sf="${1:-${DIR_BASE}/secrets.env}"
+    if [ ! -f "$sf" ]; then return 0; fi
+    local pw; pw=$(grep -E '^POSTGRES_PASSWORD=' "$sf" | cut -d= -f2- | tr -d '"' | tr -d "'")
+    if [ -z "$pw" ]; then
+        err "POSTGRES_PASSWORD in ${sf} ist leer!"
+        err "Das passiert wenn setup erneut ausgeführt wird ohne Schlüssel neu zu generieren."
+        info "Fix-Optionen:"
+        info "  1) Schlüssel bei Setup-Frage 'Vorhandene Schlüssel beibehalten?' mit N antworten"
+        info "  2) secrets.env manuell editieren: POSTGRES_PASSWORD=<passwort>"
+        info "  3) DB neu initialisieren: bash scripts/deploy.sh --reset-db --env ${ENV_TARGET}"
+        exit 1
+    fi
+}
+
 # Zeigt die letzten DB-Logs wenn der Container existiert – hilfreich bei Absturz
 _show_db_crash_logs() {
     local db_container="${DEPLOY_COMPOSE_PROJECT:-${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}}-db"
@@ -914,6 +930,15 @@ collect_config() {
     if [ -f "$secrets_file" ]; then
         # shellcheck source=/dev/null
         source "$secrets_file"
+        # secrets.env nutzt Namen ohne DEPLOY_-Prefix → auf DEPLOY_-Variablen mappen
+        # (wichtig bei erneutem Setup / Reconfigure, sonst bleibt DEPLOY_POSTGRES_PASSWORD leer)
+        [ -n "${JWT_SECRET:-}"              ] && DEPLOY_JWT_SECRET="$JWT_SECRET"
+        [ -n "${POSTGRES_PASSWORD:-}"       ] && DEPLOY_POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+        [ -n "${ANON_KEY:-}"                ] && DEPLOY_ANON_KEY="$ANON_KEY"
+        [ -n "${SERVICE_ROLE_KEY:-}"        ] && DEPLOY_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY"
+        [ -n "${PG_META_CRYPTO_KEY:-}"      ] && DEPLOY_PG_META_CRYPTO_KEY="$PG_META_CRYPTO_KEY"
+        [ -n "${DATA_TRANSFER_PASSWORD:-}"  ] && DEPLOY_DATA_TRANSFER_PASSWORD="$DATA_TRANSFER_PASSWORD"
+        [ -n "${COMPOSE_PROJECT_NAME:-}"    ] && DEPLOY_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME"
         warn "Vorhandene Schlüssel aus secrets.env geladen – NICHT neu generieren!"
         warn "(Neue Schlüssel würden alle bestehenden Sessions ungültig machen)"
         echo ""
@@ -1344,6 +1369,7 @@ setup_server() {
     [ -z "$DC" ] && { err "Docker Compose nicht gefunden"; exit 1; }
     [ ! -f "$COMPOSE_FILE" ] && { err "docker/docker-compose.yml nicht gefunden unter ${DIR_APP}"; exit 1; }
     [ ! -f "$SECRETS_FILE" ] && { err "secrets.env nicht gefunden – Setup fehlgeschlagen"; exit 1; }
+    _check_postgres_password "$SECRETS_FILE"
 
     info "Baue und starte Stack (${DEPLOY_COMPOSE_PROJECT})..."
     $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build \
@@ -1510,6 +1536,7 @@ do_update() {
     [ -z "$DC" ] && { err "Docker Compose nicht gefunden"; exit 1; }
     [ ! -f "$COMPOSE_FILE" ] && { err "docker/docker-compose.yml nicht gefunden"; exit 1; }
     [ ! -f "$SECRETS_FILE" ] && { err "secrets.env nicht gefunden – zuerst Server-Setup ausführen"; exit 1; }
+    _check_postgres_password "$SECRETS_FILE"
 
     # Git pull
     info "Ziehe neuesten Stand..."
@@ -1899,6 +1926,14 @@ do_reconfigure() {
     # Bestehende Secrets laden damit collect_config() die Werte vorausfüllt
     # shellcheck source=/dev/null
     source "$sf"
+    # secrets.env → DEPLOY_-Prefix mappen (sonst schreibt write_env_file leere Werte)
+    [ -n "${JWT_SECRET:-}"              ] && DEPLOY_JWT_SECRET="$JWT_SECRET"
+    [ -n "${POSTGRES_PASSWORD:-}"       ] && DEPLOY_POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+    [ -n "${ANON_KEY:-}"                ] && DEPLOY_ANON_KEY="$ANON_KEY"
+    [ -n "${SERVICE_ROLE_KEY:-}"        ] && DEPLOY_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY"
+    [ -n "${PG_META_CRYPTO_KEY:-}"      ] && DEPLOY_PG_META_CRYPTO_KEY="$PG_META_CRYPTO_KEY"
+    [ -n "${DATA_TRANSFER_PASSWORD:-}"  ] && DEPLOY_DATA_TRANSFER_PASSWORD="$DATA_TRANSFER_PASSWORD"
+    [ -n "${COMPOSE_PROJECT_NAME:-}"    ] && DEPLOY_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME"
 
     info "Bestehende Konfiguration geladen – Enter behält jeweiligen Wert."
     echo ""
