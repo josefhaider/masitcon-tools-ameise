@@ -1299,7 +1299,8 @@ wait_for_health() {
     echo ""
     if [ $auth_wait -ge 90 ]; then
         warn "Auth-Service nicht erreichbar nach 90s – Migrationen werden trotzdem versucht"
-        warn "Logs prüfen: docker logs ${project}-auth"
+        warn "Letzte GoTrue-Logs:"
+        docker logs --tail=20 "${project}-auth" 2>&1 | sed 's/^/    /' || true
     else
         log "Auth-Service bereit"
     fi
@@ -1650,6 +1651,11 @@ do_update() {
         }
 
     wait_for_health "$DC" "$COMPOSE_FILE" "$SECRETS_FILE"
+
+    # Nginx-Config regenerieren und in sites-available/enabled installieren
+    info "Nginx-Konfiguration aktualisieren..."
+    generate_nginx_config
+    do_setup_nginx
 
     date '+%Y-%m-%d %H:%M:%S' > "${DIR_BASE}/.last-deploy"
     log "Update abgeschlossen"
