@@ -98,62 +98,60 @@ const Dashboard = () => {
   }
 
   return (
-    <SidebarProvider>
-      <div className="flex min-h-screen w-full bg-gradient-to-br from-background to-muted">
-        <AppSidebar 
-          isAdmin={isAdmin} 
-          isApprover={isApprover}
-          isHrManager={isHrManager}
-          activeView={activeView}
-          onViewChange={setActiveView}
-          onSignOut={handleSignOut}
-          userName={profile?.full_name}
-        />
-        
-        <div className="flex-1 flex flex-col">
-          <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10 h-[53px]">
-            <div className="container mx-auto flex items-center justify-between px-4 h-full">
-              <div className="flex items-center gap-3">
-                <SidebarTrigger />
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary">
-                  <Clock className="h-4 w-4 text-primary-foreground" />
-                </div>
-                <div>
-                  <h1 className="text-lg font-bold leading-tight">Zeiterfassung</h1>
-                  <p className="text-xs text-muted-foreground">
-                    {profile?.full_name} {isAdmin && '(Admin)'}
-                  </p>
-                </div>
+    <SidebarProvider className="bg-gradient-to-br from-background to-muted">
+      <AppSidebar
+        isAdmin={isAdmin}
+        isApprover={isApprover}
+        isHrManager={isHrManager}
+        activeView={activeView}
+        onViewChange={setActiveView}
+        onSignOut={handleSignOut}
+        userName={profile?.full_name}
+      />
+
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10 h-[53px]">
+          <div className="container mx-auto flex items-center justify-between px-4 h-full">
+            <div className="flex items-center gap-3">
+              <SidebarTrigger />
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary">
+                <Clock className="h-4 w-4 text-primary-foreground" />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold leading-tight">Zeiterfassung</h1>
+                <p className="text-xs text-muted-foreground">
+                  {profile?.full_name} {isAdmin && '(Admin)'}
+                </p>
               </div>
             </div>
-          </header>
+          </div>
+        </header>
 
-          <main className="flex-1 w-full max-w-full sm:max-w-7xl mx-auto px-2 sm:px-4 py-4 sm:py-8 overflow-hidden">
-            {activeView === 'overview' && <DashboardOverview userId={user.id} onNavigate={setActiveView} />}
-            {activeView === 'calendar' && <MonthlyTimeCalendar userId={user.id} />}
-            {activeView === 'vacation-request' && <VacationManagement />}
-            {activeView === 'vacation-approval' && isApprover && <VacationApprovalManager />}
-            {activeView === 'team-overview' && (isHrManager || isAdmin) && <TeamOverview />}
-            {activeView === 'employees' && isAdmin && <EmployeeManager />}
-            {activeView === 'vacation-planning' && <YearlyVacationCalendar />}
-            {activeView === 'breaks' && isAdmin && <BreakRulesManager />}
-            {activeView === 'absences' && (isHrManager || isAdmin) && <AbsenceManager />}
-            {activeView === 'profile' && <UserProfile />}
-            {activeView === 'audit-log' && isAdmin && <AuditLogViewer />}
-            {activeView === 'corrections' && (isHrManager || isAdmin) && <BalanceCorrectionManager />}
-            {activeView === 'teams' && isAdmin && <TeamManager />}
-            {activeView === 'holidays' && isAdmin && <HolidayManager />}
-            {activeView === 'school-holidays' && isAdmin && <SchoolHolidayManager />}
-            {activeView === 'sick-leave' && <SickLeaveManagement />}
-            {activeView === 'reports' && (isHrManager || isAdmin) && <ReportDashboard onNavigate={setActiveView} />}
-            {activeView === 'sick-leave-admin' && (isHrManager || isAdmin) && <SickLeaveAdminManager />}
-            {activeView === 'sick-leave-report' && (isHrManager || isAdmin) && <SickLeaveReport />}
-            {activeView === 'hours-report' && (isHrManager || isAdmin) && <MonthlyHoursReport isAdmin={true} />}
-            {activeView === 'balance-report' && (isHrManager || isAdmin) && <BalanceReport />}
-            {activeView === 'data-transfer' && isAdmin && <DataTransferManager />}
-            {activeView === 'changelog' && <Changelog />}
-          </main>
-        </div>
+        <main className="flex-1 w-full max-w-full sm:max-w-7xl mx-auto px-2 sm:px-4 py-4 sm:py-8 overflow-hidden">
+          {activeView === 'overview' && <DashboardOverview userId={user.id} onNavigate={setActiveView} />}
+          {activeView === 'calendar' && <MonthlyTimeCalendar userId={user.id} />}
+          {activeView === 'vacation-request' && <VacationManagement />}
+          {activeView === 'vacation-approval' && isApprover && <VacationApprovalManager />}
+          {activeView === 'team-overview' && (isHrManager || isAdmin) && <TeamOverview />}
+          {activeView === 'employees' && isAdmin && <EmployeeManager />}
+          {activeView === 'vacation-planning' && <YearlyVacationCalendar />}
+          {activeView === 'breaks' && isAdmin && <BreakRulesManager />}
+          {activeView === 'absences' && (isHrManager || isAdmin) && <AbsenceManager />}
+          {activeView === 'profile' && <UserProfile />}
+          {activeView === 'audit-log' && isAdmin && <AuditLogViewer />}
+          {activeView === 'corrections' && (isHrManager || isAdmin) && <BalanceCorrectionManager />}
+          {activeView === 'teams' && isAdmin && <TeamManager />}
+          {activeView === 'holidays' && isAdmin && <HolidayManager />}
+          {activeView === 'school-holidays' && isAdmin && <SchoolHolidayManager />}
+          {activeView === 'sick-leave' && <SickLeaveManagement />}
+          {activeView === 'reports' && (isHrManager || isAdmin) && <ReportDashboard onNavigate={setActiveView} />}
+          {activeView === 'sick-leave-admin' && (isHrManager || isAdmin) && <SickLeaveAdminManager />}
+          {activeView === 'sick-leave-report' && (isHrManager || isAdmin) && <SickLeaveReport />}
+          {activeView === 'hours-report' && (isHrManager || isAdmin) && <MonthlyHoursReport isAdmin={true} />}
+          {activeView === 'balance-report' && (isHrManager || isAdmin) && <BalanceReport />}
+          {activeView === 'data-transfer' && isAdmin && <DataTransferManager />}
+          {activeView === 'changelog' && <Changelog />}
+        </main>
       </div>
     </SidebarProvider>
   );
