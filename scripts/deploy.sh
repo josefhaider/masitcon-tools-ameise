@@ -99,6 +99,19 @@ is_port_used_by_our_stack() {
     [[ "$occ" == "Docker: ${prefix}-"* ]]
 }
 
+# Zeigt die letzten DB-Logs wenn der Container existiert – hilfreich bei Absturz
+_show_db_crash_logs() {
+    local db_container="${DEPLOY_COMPOSE_PROJECT:-${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}}-db"
+    if docker inspect "$db_container" >/dev/null 2>&1; then
+        echo ""
+        warn "── Letzte DB-Logs (${db_container}) ──────────────────────────────────"
+        docker logs --tail 25 "$db_container" 2>&1 | sed 's/^/  /'
+        echo ""
+        info "Vollständige Logs: docker logs ${db_container}"
+        info "Wenn Volume korrupt: bash scripts/deploy.sh --reset-db --env ${ENV_TARGET}"
+    fi
+}
+
 detect_compose() {
     if docker compose version >/dev/null 2>&1; then echo "docker compose"
     elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"
@@ -150,6 +163,7 @@ while [[ $# -gt 0 ]]; do
         --reconfigure)   MODE="reconfigure";   shift ;;
         --sync-migrations) MODE="sync-migrations"; shift ;;
         --setup-nginx)     MODE="setup-nginx";     shift ;;
+        --reset-db)        MODE="reset-db";        shift ;;
         --env)      ENV_TARGET="${2:-production}"; ENV_EXPLICIT=true; shift 2 ;;
         --base-dir) CLI_BASE_DIR="${2:-}"; shift 2 ;;
         --service)  SHOW_LOGS_SERVICE="${2:-}"; shift 2 ;;
@@ -174,6 +188,7 @@ Modi:
   --reconfigure      Bestehende Einstellungen laden, ändern und neu deployen
   --sync-migrations  Migrationen als angewendet markieren (ohne Ausführung)
   --setup-nginx      Nginx-Configs nach sites-available kopieren + Symlinks in sites-enabled
+  --reset-db         DB-Volume löschen und neu initialisieren (bei korruptem Volume)
 
 Optionen:
   --env production|staging    Ziel-Umgebung (Default: production)
@@ -1336,7 +1351,7 @@ setup_server() {
             err "docker compose up fehlgeschlagen"
             info "Bei 'Pool overlaps with other': Anderes Docker-Subnetz wählen: bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET}"
             info "Dort z.B. 172.22.0.0/16 oder 10.10.20.0/24 eintragen (nicht 172.20/172.21 wenn schon belegt)."
-            info "Bei 'container … is unhealthy': DB-Logs prüfen: docker logs ${DEPLOY_COMPOSE_PROJECT:-${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}}-db (beim ersten Start kann die DB-Initialisierung länger dauern)."
+            _show_db_crash_logs
             exit 1
         }
 
@@ -1512,7 +1527,7 @@ do_update() {
         || {
             err "docker compose up fehlgeschlagen"
             info "Bei 'Pool overlaps with other': Anderes Docker-Subnetz: bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET}"
-            info "Bei 'container … is unhealthy': DB-Logs prüfen: docker logs ${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}-db (beim ersten Start kann die DB-Initialisierung länger dauern)."
+            _show_db_crash_logs
             exit 1
         }
 
@@ -1578,6 +1593,57 @@ do_prune() {
         docker volume prune -f
         log "Docker bereinigt"
     fi
+}
+
+do_reset_db() {
+    header "DB-Volume zurücksetzen – ${PROJECT_DISPLAY} (${ENV_TARGET})"
+    warn "ACHTUNG: Alle Daten in der Datenbank werden unwiderruflich gelöscht!"
+    confirm "Wirklich fortfahren?" "n" || exit 0
+    confirm "LETZTE WARNUNG – alle Datenbankdaten in ${ENV_TARGET} gehen verloren. Sicher?" "n" || exit 0
+
+    load_or_init_dirs
+    local sf; sf=$(get_secrets_file)
+    local DC; DC=$(detect_compose)
+    local cf="${DIR_APP}/docker/docker-compose.yml"
+
+    if [ ! -f "$cf" ]; then
+        err "docker-compose.yml nicht gefunden: $cf"
+        info "Führe zuerst setup aus: bash scripts/deploy.sh --env ${ENV_TARGET}"
+        exit 1
+    fi
+
+    local db_container="${DEPLOY_COMPOSE_PROJECT:-${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}}-db"
+    local db_volume="${DEPLOY_COMPOSE_PROJECT:-${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}}_db-data"
+
+    info "Stoppe DB-Container..."
+    if [ -n "$sf" ]; then
+        $DC --env-file "$sf" -f "$cf" stop db 2>/dev/null || true
+        $DC --env-file "$sf" -f "$cf" rm -f db 2>/dev/null || true
+    else
+        $DC -f "$cf" stop db 2>/dev/null || true
+        $DC -f "$cf" rm -f db 2>/dev/null || true
+    fi
+
+    info "Entferne DB-Volume ${db_volume}..."
+    if docker volume rm "$db_volume" 2>/dev/null; then
+        log "Volume entfernt"
+    else
+        warn "Volume '${db_volume}' nicht gefunden oder konnte nicht entfernt werden"
+        info "Verfügbare Volumes: $(docker volume ls --format '{{.Name}}' | grep "${DEPLOY_COMPOSE_PROJECT:-${PROJECT_NAME}-${ENV_TARGET}}" || echo "(keine passenden)")"
+    fi
+
+    info "Starte DB-Container neu..."
+    if [ -n "$sf" ]; then
+        $DC --env-file "$sf" -f "$cf" up -d db
+    else
+        $DC -f "$cf" up -d db
+    fi
+
+    echo ""
+    log "DB-Volume zurückgesetzt – Container wird neu initialisiert"
+    info "Migrations werden beim nächsten Start automatisch angewendet"
+    info "Logs verfolgen: docker logs -f ${db_container}"
+    info "Danach vollständig starten: bash scripts/deploy.sh --update --env ${ENV_TARGET}"
 }
 
 do_check_ports() {
@@ -1866,7 +1932,7 @@ do_reconfigure() {
                 || {
                     err "docker compose up fehlgeschlagen"
                     info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"
-                    info "Bei 'unhealthy': docker logs ${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}-db"
+                    _show_db_crash_logs
                     exit 1
                 }
             $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d
@@ -1877,7 +1943,7 @@ do_reconfigure() {
                 || {
                     err "docker compose up fehlgeschlagen"
                     info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"
-                    info "Bei 'unhealthy': docker logs ${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}-db"
+                    _show_db_crash_logs
                     exit 1
                 }
             ;;
@@ -1887,7 +1953,7 @@ do_reconfigure() {
                 || {
                     err "docker compose up fehlgeschlagen"
                     info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"
-                    info "Bei 'unhealthy': docker logs ${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}-db"
+                    _show_db_crash_logs
                     exit 1
                 }
             ;;
@@ -1954,6 +2020,7 @@ main() {
         reconfigure)     do_reconfigure     ;;
         sync-migrations) do_sync_migrations ;;
         setup-nginx)     do_setup_nginx    ;;
+        reset-db)        do_reset_db       ;;
         setup)           setup_server       ;;
     esac
 }
