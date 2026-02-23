@@ -18,6 +18,7 @@
 # Nur Migrationen: bash scripts/deploy.sh --migrate
 # Backup:          bash scripts/deploy.sh --backup
 # Port-Check:      bash scripts/deploy.sh --check-ports
+# Nginx-Setup:     bash scripts/deploy.sh --setup-nginx
 #
 # ===================================================================
 set -uo pipefail
@@ -147,6 +148,7 @@ while [[ $# -gt 0 ]]; do
         --check-ports)   MODE="check-ports";   shift ;;
         --reconfigure)   MODE="reconfigure";   shift ;;
         --sync-migrations) MODE="sync-migrations"; shift ;;
+        --setup-nginx)     MODE="setup-nginx";     shift ;;
         --env)      ENV_TARGET="${2:-production}"; ENV_EXPLICIT=true; shift 2 ;;
         --base-dir) CLI_BASE_DIR="${2:-}"; shift 2 ;;
         --service)  SHOW_LOGS_SERVICE="${2:-}"; shift 2 ;;
@@ -170,6 +172,7 @@ Modi:
   --check-ports      Ports prüfen (Supabase) – zeigt Belegung, bietet Alternativen
   --reconfigure      Bestehende Einstellungen laden, ändern und neu deployen
   --sync-migrations  Migrationen als angewendet markieren (ohne Ausführung)
+  --setup-nginx      Nginx-Configs für Production + Staging erstellen und nach /etc/nginx/sites-enabled/ kopieren
 
 Optionen:
   --env production|staging    Ziel-Umgebung (Default: production)
@@ -691,7 +694,8 @@ DEPLOY_DOCKER_SUBNET=""
 
 # Lädt gespeicherte Konfiguration (idempotenter Re-Run)
 _load_saved_config() {
-    local cfg="${DIR_BASE}/config.env"
+    local cfg="${DIR_BASE}/config.env.${ENV_TARGET}"
+    [ -f "$cfg" ] || cfg="${DIR_BASE}/config.env"
     [ -f "$cfg" ] || return 0
     # shellcheck source=/dev/null
     source "$cfg"
@@ -707,9 +711,9 @@ _load_saved_config() {
     echo ""
 }
 
-# Speichert nicht-sensible Konfiguration für Re-Runs
+# Speichert nicht-sensible Konfiguration für Re-Runs (pro Umgebung)
 _save_config() {
-    local cfg="${DIR_BASE}/config.env"
+    local cfg="${DIR_BASE}/config.env.${ENV_TARGET}"
     # /opt/masitcon erfordert Root-Rechte – sudo mit Ownership-Transfer
     if ! mkdir -p "$DIR_BASE" 2>/dev/null; then
         info "Erstelle ${DIR_BASE} mit sudo..."
@@ -1067,7 +1071,7 @@ collect_config() {
 
     # Konfiguration speichern
     _save_config
-    log "Konfiguration gespeichert: ${DIR_BASE}/config.env"
+    log "Konfiguration gespeichert: ${DIR_BASE}/config.env.${ENV_TARGET}"
 
     # Abgeleitete Variablen exportieren (für write_env_file)
     _SITE_URL="${DEPLOY_PROTOCOL}://${DEPLOY_DOMAIN}"
@@ -1190,10 +1194,22 @@ wait_for_health() {
     warn "Timeout – Status prüfen: bash scripts/deploy.sh --status --env ${ENV_TARGET}"
 }
 
+# Generiert Nginx-Config. Optional: _generate_nginx_for_env "production"|"staging"
+# nutzt config.env.${env}; ohne Parameter: aktuelle Umgebung.
 generate_nginx_config() {
-    local conf_file="${DIR_CONFIGS}/nginx-${ENV_TARGET}.conf"
+    local target_env="${1:-$ENV_TARGET}"
+    local dir_configs="${DIR_BASE}/${target_env}/configs"
+    local conf_file="${dir_configs}/nginx-${target_env}.conf"
+
+    # Config für Ziel-Umgebung laden (garantiert richtige DEPLOY_* Variablen)
+    local cfg="${DIR_BASE}/config.env.${target_env}"
+    [ -f "$cfg" ] || cfg="${DIR_BASE}/config.env"
+    if [ -f "$cfg" ]; then
+        # shellcheck source=/dev/null
+        source "$cfg"
+    fi
     local log_dir="/var/log/nginx"
-    mkdir -p "$DIR_CONFIGS" 2>/dev/null || { sudo mkdir -p "$DIR_CONFIGS"; sudo chown "$(id -u):$(id -g)" "$DIR_CONFIGS"; }
+    mkdir -p "$dir_configs" 2>/dev/null || { sudo mkdir -p "$dir_configs"; sudo chown "$(id -u):$(id -g)" "$dir_configs"; }
 
     # SSL-Block nur bei HTTPS-Protokoll
     local ssl_block=""
@@ -1210,14 +1226,14 @@ generate_nginx_config() {
     fi
 
     cat > "$conf_file" << NGINX
-# ${PROJECT_DISPLAY} – Nginx-Konfiguration (${ENV_TARGET})
+# ${PROJECT_DISPLAY} – Nginx-Konfiguration (${target_env})
 # ─────────────────────────────────────────────────────────────
 # Routing:
 #   ${DEPLOY_DOMAIN}             → App (Vite SPA, Port ${DEPLOY_APP_PORT})
 #   ${DEPLOY_DOMAIN}/supabase/*  → Supabase Kong (Port ${DEPLOY_API_PORT})
 #
 # Einbinden:
-#   sudo ln -s ${conf_file} /etc/nginx/sites-enabled/${PROJECT_NAME}-${ENV_TARGET}.conf
+#   sudo ln -s ${conf_file} /etc/nginx/sites-enabled/${PROJECT_NAME}-${target_env}.conf
 #   sudo nginx -t && sudo systemctl reload nginx
 # ─────────────────────────────────────────────────────────────
 
@@ -1225,8 +1241,8 @@ server {
 ${ssl_block}
     server_name ${DEPLOY_DOMAIN};
 
-    access_log ${log_dir}/${PROJECT_NAME}-${ENV_TARGET}-access.log;
-    error_log  ${log_dir}/${PROJECT_NAME}-${ENV_TARGET}-error.log;
+    access_log ${log_dir}/${PROJECT_NAME}-${target_env}-access.log;
+    error_log  ${log_dir}/${PROJECT_NAME}-${target_env}-error.log;
 
     # ── Supabase API (Kong) – /supabase/* → Kong ─────────────
     # Der /supabase-Präfix wird vor der Weiterleitung entfernt.
@@ -1534,7 +1550,7 @@ do_clean() {
             rm -rf "${DIR_BASE:?}/${ENV_TARGET}"
             rm -f "${DIR_BASE}/deploy.env.${ENV_TARGET}"
             rm -f "${DIR_BASE}/secrets.env"
-            rm -f "${DIR_BASE}/config.env"
+            rm -f "${DIR_BASE}/config.env" "${DIR_BASE}/config.env.production" "${DIR_BASE}/config.env.staging"
             log "Verzeichnisse und Konfiguration gelöscht"
         fi
     else
@@ -1683,6 +1699,60 @@ do_sync_migrations() {
     log "Fertig: ${count} Migrationen als angewendet markiert"
 }
 
+do_setup_nginx() {
+    header "Nginx-Konfiguration einrichten – ${PROJECT_DISPLAY}"
+
+    load_or_init_dirs
+
+    local nginx_sites="${NGINX_SITES_ENABLED:-/etc/nginx/sites-enabled}"
+    local has_any=false
+
+    for env in production staging; do
+        local cfg="${DIR_BASE}/config.env.${env}"
+        [ -f "$cfg" ] || cfg="${DIR_BASE}/config.env"
+        if [ ! -f "$cfg" ]; then
+            warn "Keine Config für ${env} – überspringe (${DIR_BASE}/config.env.${env} oder config.env)"
+            continue
+        fi
+
+        generate_nginx_config "$env"
+        local conf_file="${DIR_BASE}/${env}/configs/nginx-${env}.conf"
+        local target_name="${PROJECT_NAME}-${env}.conf"
+        local target_link="${nginx_sites}/${target_name}"
+
+        if [ ! -f "$conf_file" ]; then
+            err "Nginx-Config nicht erstellt: ${conf_file}"
+            continue
+        fi
+
+        if [ -L "$target_link" ] || [ -f "$target_link" ]; then
+            sudo rm -f "$target_link"
+        fi
+        sudo ln -sf "$conf_file" "$target_link" || { err "Symlink fehlgeschlagen: ${target_link}"; continue; }
+        log "Nginx ${env}: ${target_link} → ${conf_file}"
+        has_any=true
+    done
+
+    if [ "$has_any" = false ]; then
+        err "Keine Nginx-Config erstellt. Zuerst Setup ausführen: bash scripts/deploy.sh --env production"
+        exit 1
+    fi
+
+    echo ""
+    if sudo nginx -t 2>/dev/null; then
+        log "Nginx-Konfiguration gültig"
+        if confirm "Nginx jetzt neu laden?" "j"; then
+            sudo systemctl reload nginx 2>/dev/null && log "Nginx neu geladen" || warn "systemctl reload nginx fehlgeschlagen"
+        fi
+    else
+        warn "Nginx-Test fehlgeschlagen – prüfe: sudo nginx -t"
+    fi
+
+    echo ""
+    info "Configs: ${DIR_BASE}/{production,staging}/configs/nginx-*.conf"
+    info "Symlinks: ${nginx_sites}/${PROJECT_NAME}-*.conf"
+}
+
 do_backup() {
     header "Backup"
     check_supabase_cli
@@ -1813,6 +1883,7 @@ main() {
         check-ports)  do_check_ports  ;;
         reconfigure)     do_reconfigure     ;;
         sync-migrations) do_sync_migrations ;;
+        setup-nginx)     do_setup_nginx    ;;
         setup)           setup_server       ;;
     esac
 }
