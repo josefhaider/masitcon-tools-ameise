@@ -1332,7 +1332,12 @@ setup_server() {
 
     info "Baue und starte Stack (${DEPLOY_COMPOSE_PROJECT})..."
     $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build \
-        || { err "docker compose up fehlgeschlagen"; exit 1; }
+        || {
+            err "docker compose up fehlgeschlagen"
+            info "Bei 'Pool overlaps with other': Anderes Docker-Subnetz wählen: bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET}"
+            info "Dort z.B. 172.22.0.0/16 oder 10.10.20.0/24 eintragen (nicht 172.20/172.21 wenn schon belegt)."
+            exit 1
+        }
 
     wait_for_health "$DC" "$COMPOSE_FILE" "$SECRETS_FILE"
 
@@ -1503,7 +1508,11 @@ do_update() {
     # App-Container neu bauen (VITE_* aus secrets.env)
     info "Baue App-Container neu (VITE_SUPABASE_URL wird neu eingebettet)..."
     $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build app \
-        || { err "docker compose up fehlgeschlagen"; exit 1; }
+        || {
+            err "docker compose up fehlgeschlagen"
+            info "Bei 'Pool overlaps with other': Anderes Docker-Subnetz: bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET}"
+            exit 1
+        }
 
     # Andere Container nur neu starten (nicht neu bauen)
     $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d
@@ -1852,18 +1861,30 @@ do_reconfigure() {
         2)
             info "Baue App-Container neu..."
             $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build app \
-                || { err "docker compose up fehlgeschlagen"; exit 1; }
+                || {
+                    err "docker compose up fehlgeschlagen"
+                    info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"
+                    exit 1
+                }
             $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d
             ;;
         3)
             info "Baue alle Container neu..."
             $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build \
-                || { err "docker compose up fehlgeschlagen"; exit 1; }
+                || {
+                    err "docker compose up fehlgeschlagen"
+                    info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"
+                    exit 1
+                }
             ;;
         *)
             info "Starte Container mit neuer Konfiguration..."
             $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d \
-                || { err "docker compose up fehlgeschlagen"; exit 1; }
+                || {
+                    err "docker compose up fehlgeschlagen"
+                    info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"
+                    exit 1
+                }
             ;;
     esac
 
