@@ -1716,6 +1716,11 @@ do_setup_nginx() {
         fi
     done
 
+    info "Prüfe sudo-Rechte für Kopieren nach ${nginx_available}..."
+    if ! sudo -v 2>/dev/null; then
+        warn "sudo fehlgeschlagen (Passwort nötig?). Alternativ: sudo bash scripts/deploy.sh --setup-nginx"
+    fi
+
     for env in production staging; do
         local cfg="${DIR_BASE}/config.env.${env}"
         [ -f "$cfg" ] || cfg="${DIR_BASE}/config.env"
@@ -1737,10 +1742,22 @@ do_setup_nginx() {
             continue
         fi
 
+        # Absoluten Pfad für sudo cp verwenden
+        local abs_conf
+        abs_conf="$(cd "$(dirname "$conf_file")" 2>/dev/null && pwd)/$(basename "$conf_file")"
+        [ -f "$abs_conf" ] && conf_file="$abs_conf"
+
         # 1. Kopiere nach sites-available
         info "Kopiere ${conf_file} → ${file_available}"
         if ! sudo cp -f "$conf_file" "$file_available"; then
             err "Kopieren fehlgeschlagen: ${file_available}"
+            info "  Manuell: sudo cp -f ${conf_file} ${file_available}"
+            continue
+        fi
+
+        if ! sudo test -f "$file_available"; then
+            err "Datei nach Kopiervorgang nicht gefunden: ${file_available}"
+            info "  Manuell ausführen: sudo cp -f ${conf_file} ${file_available}"
             continue
         fi
 
