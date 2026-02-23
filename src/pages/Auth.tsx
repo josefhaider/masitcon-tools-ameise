@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -9,16 +9,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { toast } from 'sonner';
 import { Clock, Plane, Thermometer, BarChart3 } from 'lucide-react';
 import masitconLogo from '@/assets/masitcon-logo.png';
-
-// Check URL hash for recovery token BEFORE component renders
-const checkForRecoveryToken = (): boolean => {
-  // Prüfe ob wir bereits im Recovery-Mode sind (aus vorherigem Render/Navigation)
-  if (sessionStorage.getItem('password_recovery_mode') === 'true') {
-    return true;
-  }
-  const hashParams = new URLSearchParams(window.location.hash.substring(1));
-  return hashParams.get('type') === 'recovery' && !!hashParams.get('access_token');
-};
 
 // SVG Wave component for visual interest
 const WaveDecoration = ({ className = '' }: { className?: string }) => (
@@ -48,159 +38,15 @@ const FloatingBlob = ({ className = '', delay = 0 }: { className?: string; delay
   />
 );
 
+type View = 'login' | 'forgot';
+
 const Auth = () => {
   const navigate = useNavigate();
   const { signIn, user } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [isRecoveryMode, setIsRecoveryMode] = useState(checkForRecoveryToken);
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [sessionReady, setSessionReady] = useState(false);
-
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setIsRecoveryMode(true);
-        setSessionReady(true);
-      }
-    });
-
-    const hashParams = new URLSearchParams(window.location.hash.substring(1));
-    const accessToken = hashParams.get('access_token');
-    const type = hashParams.get('type');
-    
-    if (type === 'recovery' && accessToken) {
-      // Recovery-Mode in sessionStorage persistieren BEVOR setSession aufgerufen wird
-      sessionStorage.setItem('password_recovery_mode', 'true');
-      
-      supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: hashParams.get('refresh_token') || '',
-      }).then(({ error }) => {
-        if (error) {
-          toast.error('Token ungültig oder abgelaufen', {
-            description: 'Bitte fordern Sie einen neuen Link an.',
-          });
-          setIsRecoveryMode(false);
-          sessionStorage.removeItem('password_recovery_mode');
-        } else {
-          setIsRecoveryMode(true);
-          setSessionReady(true);
-          window.history.replaceState(null, '', window.location.pathname);
-        }
-      });
-    }
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const handlePasswordReset = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (newPassword !== confirmPassword) {
-      toast.error('Passwörter stimmen nicht überein');
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      toast.error('Passwort muss mindestens 6 Zeichen haben');
-      return;
-    }
-
-    setLoading(true);
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-
-    if (error) {
-      toast.error('Passwort konnte nicht geändert werden', {
-        description: error.message,
-      });
-    } else {
-      toast.success('Passwort erfolgreich geändert');
-      // Recovery-Mode aus sessionStorage entfernen
-      sessionStorage.removeItem('password_recovery_mode');
-      setIsRecoveryMode(false);
-      navigate('/');
-    }
-    setLoading(false);
-  };
-
-  const handleForgotPassword = async (email: string) => {
-    if (!email) {
-      toast.error('Bitte geben Sie Ihre E-Mail-Adresse ein');
-      return;
-    }
-
-    setLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth`,
-    });
-
-    if (error) {
-      toast.error('Fehler beim Senden der E-Mail', {
-        description: error.message,
-      });
-    } else {
-      toast.success('Passwort-Reset E-Mail gesendet', {
-        description: 'Bitte überprüfen Sie Ihr Postfach.',
-      });
-    }
-    setLoading(false);
-  };
-
-  // Recovery mode UI
-  if (isRecoveryMode) {
-    if (!sessionReady) {
-      return (
-        <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-masitcon-darkblue via-masitcon-lightblue to-masitcon-turquoise p-4">
-          <div className="text-center">
-            <Clock className="mx-auto h-12 w-12 animate-spin text-white" />
-            <p className="mt-4 text-white">Wird geladen...</p>
-          </div>
-        </div>
-      );
-    }
-    
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-masitcon-darkblue via-masitcon-lightblue to-masitcon-turquoise p-4">
-        <Card className="w-full max-w-md backdrop-blur-xl bg-white/95 border-white/20 shadow-2xl">
-          <CardHeader className="space-y-1 text-center">
-            <img src={masitconLogo} alt="masitcon" className="mx-auto h-12 w-auto object-contain mb-4" />
-            <CardTitle className="text-2xl font-bold">Neues Passwort festlegen</CardTitle>
-            <CardDescription>Geben Sie Ihr neues Passwort ein</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handlePasswordReset} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="new-password">Neues Passwort</Label>
-                <Input
-                  id="new-password"
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  minLength={6}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="confirm-password">Passwort bestätigen</Label>
-                <Input
-                  id="confirm-password"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  minLength={6}
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full bg-masitcon-turquoise hover:bg-masitcon-turquoise/90" disabled={loading}>
-                {loading ? 'Wird gespeichert...' : 'Passwort ändern'}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const [view, setView] = useState<View>('login');
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSent, setForgotSent] = useState(false);
 
   // Redirect if already logged in
   if (user) {
@@ -227,6 +73,24 @@ const Auth = () => {
       navigate('/');
     }
 
+    setLoading(false);
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+      redirectTo: `${window.location.origin}/auth/callback`,
+    });
+
+    if (error) {
+      toast.error('Fehler beim Senden der E-Mail', {
+        description: error.message,
+      });
+    } else {
+      setForgotSent(true);
+    }
     setLoading(false);
   };
 
@@ -337,55 +201,115 @@ const Auth = () => {
         {/* Form area */}
         <div className="flex-1 flex flex-col justify-center items-center p-6 sm:p-12">
           <Card className="w-full max-w-md border-0 shadow-none lg:border lg:shadow-lg lg:bg-card/80 lg:backdrop-blur-sm">
-            <CardHeader className="space-y-1 text-center pb-2">
-              <CardTitle className="text-2xl font-bold text-foreground">Willkommen</CardTitle>
-              <CardDescription>Melden Sie sich mit Ihrem Konto an</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSignIn} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="signin-email">E-Mail</Label>
-                  <Input
-                    id="signin-email"
-                    name="email"
-                    type="email"
-                    autoComplete="username"
-                    placeholder="ihre.email@beispiel.de"
-                    required
-                    className="h-12"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="signin-password">Passwort</Label>
-                  <Input
-                    id="signin-password"
-                    name="password"
-                    type="password"
-                    autoComplete="current-password"
-                    required
-                    className="h-12"
-                  />
-                </div>
-                <Button 
-                  type="submit" 
-                  className="w-full h-12 text-base font-semibold bg-masitcon-turquoise hover:bg-masitcon-turquoise/90 shadow-lg shadow-masitcon-turquoise/25 transition-all duration-300 hover:shadow-xl hover:shadow-masitcon-turquoise/30" 
-                  disabled={loading}
-                >
-                  {loading ? 'Wird angemeldet...' : 'Anmelden'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="link"
-                  className="w-full text-sm text-muted-foreground hover:text-masitcon-turquoise"
-                  onClick={() => {
-                    const emailInput = document.getElementById('signin-email') as HTMLInputElement;
-                    handleForgotPassword(emailInput?.value || '');
-                  }}
-                >
-                  Passwort vergessen?
-                </Button>
-              </form>
-            </CardContent>
+            {view === 'login' ? (
+              <>
+                <CardHeader className="space-y-1 text-center pb-2">
+                  <CardTitle className="text-2xl font-bold text-foreground">Willkommen</CardTitle>
+                  <CardDescription>Melden Sie sich mit Ihrem Konto an</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSignIn} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="signin-email">E-Mail</Label>
+                      <Input
+                        id="signin-email"
+                        name="email"
+                        type="email"
+                        autoComplete="username"
+                        placeholder="ihre.email@beispiel.de"
+                        required
+                        className="h-12"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="signin-password">Passwort</Label>
+                      <Input
+                        id="signin-password"
+                        name="password"
+                        type="password"
+                        autoComplete="current-password"
+                        required
+                        className="h-12"
+                      />
+                    </div>
+                    <Button
+                      type="submit"
+                      className="w-full h-12 text-base font-semibold bg-masitcon-turquoise hover:bg-masitcon-turquoise/90 shadow-lg shadow-masitcon-turquoise/25 transition-all duration-300 hover:shadow-xl hover:shadow-masitcon-turquoise/30"
+                      disabled={loading}
+                    >
+                      {loading ? 'Wird angemeldet...' : 'Anmelden'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="w-full text-sm text-muted-foreground hover:text-masitcon-turquoise"
+                      onClick={() => { setView('forgot'); setForgotSent(false); setForgotEmail(''); }}
+                    >
+                      Passwort vergessen?
+                    </Button>
+                  </form>
+                </CardContent>
+              </>
+            ) : (
+              <>
+                <CardHeader className="space-y-1 text-center pb-2">
+                  <CardTitle className="text-2xl font-bold text-foreground">Passwort zurücksetzen</CardTitle>
+                  <CardDescription>
+                    {forgotSent
+                      ? 'E-Mail versendet – bitte prüfen Sie Ihr Postfach.'
+                      : 'Geben Sie Ihre E-Mail-Adresse ein. Sie erhalten einen Reset-Link.'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {forgotSent ? (
+                    <div className="space-y-4">
+                      <p className="text-sm text-center text-muted-foreground">
+                        Falls ein Konto mit dieser Adresse existiert, wurde eine E-Mail gesendet.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full h-12"
+                        onClick={() => { setView('login'); setForgotSent(false); setForgotEmail(''); }}
+                      >
+                        Zurück zur Anmeldung
+                      </Button>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleForgotPassword} className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="forgot-email">E-Mail</Label>
+                        <Input
+                          id="forgot-email"
+                          type="email"
+                          autoComplete="username"
+                          placeholder="ihre.email@beispiel.de"
+                          value={forgotEmail}
+                          onChange={(e) => setForgotEmail(e.target.value)}
+                          required
+                          className="h-12"
+                        />
+                      </div>
+                      <Button
+                        type="submit"
+                        className="w-full h-12 text-base font-semibold bg-masitcon-turquoise hover:bg-masitcon-turquoise/90"
+                        disabled={loading}
+                      >
+                        {loading ? 'Wird gesendet...' : 'Reset-Link senden'}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="w-full text-sm text-muted-foreground hover:text-masitcon-turquoise"
+                        onClick={() => setView('login')}
+                      >
+                        Zurück zur Anmeldung
+                      </Button>
+                    </form>
+                  )}
+                </CardContent>
+              </>
+            )}
           </Card>
 
           <p className="mt-8 text-sm text-muted-foreground text-center">

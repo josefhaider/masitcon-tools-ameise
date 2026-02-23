@@ -14,8 +14,6 @@
 #   API (Kong):  8100  → http://localhost:8100
 #   PostgreSQL:  5433  → localhost:5433
 #   Studio:      3101  → http://localhost:3101
-#   Inbucket:    9000  → http://localhost:9000 (E-Mail-Catch)
-#   SMTP intern: 2500  → inbucket Container (nur intern)
 #
 # Migrationen werden beim ersten Start automatisch angewendet.
 # Für Reset nach Migration-Änderungen: docker compose down -v && up -d
@@ -153,17 +151,17 @@ services:
       # SMTP – Standard: Inbucket (fängt E-Mails lokal ab, http://localhost:9000)
       # Für echten Versand: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS in .env.local setzen.
       GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-admin@ameise.local}
-      GOTRUE_SMTP_HOST: ${SMTP_HOST:-inbucket}
-      GOTRUE_SMTP_PORT: ${SMTP_PORT:-2500}
-      GOTRUE_SMTP_USER: ${SMTP_USER:-fake}
-      GOTRUE_SMTP_PASS: ${SMTP_PASS:-fake}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-465}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
       GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-Ameise Local}
       GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: "true"
 
-      GOTRUE_MAILER_URLPATHS_INVITE: /auth/callback
-      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/callback
-      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/callback
-      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/callback
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/v1/verify
 
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
       GOTRUE_SMS_AUTOCONFIRM: "false"
@@ -277,21 +275,6 @@ services:
       DATA_TRANSFER_PASSWORD: ${DATA_TRANSFER_PASSWORD:-local-dev-password}
       ALLOWED_ORIGIN: ${SITE_URL:-http://localhost:8080}
 
-  # ── Inbucket (E-Mail-Catch lokal) ────────────────────────────────
-  # Fängt alle ausgehenden E-Mails (GoTrue Auth-Mails) lokal ab.
-  # Web-UI:  http://localhost:9000   (E-Mails lesen)
-  # SMTP:    inbucket:2500           (nur intern von GoTrue genutzt)
-  inbucket:
-    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-inbucket
-    image: inbucket/inbucket:latest
-    restart: unless-stopped
-    ports:
-      - "0.0.0.0:${INBUCKET_WEB_PORT:-9000}:9000"
-      - "0.0.0.0:${INBUCKET_SMTP_PORT:-2500}:2500"
-    environment:
-      INBUCKET_LOGLEVEL: warn
-      INBUCKET_SMTP_ADDR: "0.0.0.0:2500"
-      INBUCKET_HTTP_ADDR: "0.0.0.0:9000"
 
 volumes:
   db-data:
