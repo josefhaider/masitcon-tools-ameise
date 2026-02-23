@@ -691,5 +691,6 @@ async function handleImport(supabase: any, body: any, user: any, c: any) {
 
 // ─── Server starten ──────────────────────────────────────────────────────────
 const port = parseInt(process.env.PORT || '3200', 10)
-console.log(`Ameise API läuft auf Port ${port}`)
-serve(app.fetch, { port })
+serve({ fetch: app.fetch, port }, () => {
+  console.log(`Ameise API läuft auf Port ${port}`)
+})
