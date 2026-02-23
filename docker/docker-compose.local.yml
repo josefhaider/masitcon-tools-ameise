@@ -44,6 +44,7 @@ services:
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
       interval: 5s
+      start_period: 120s
       timeout: 5s
       retries: 10
     environment:

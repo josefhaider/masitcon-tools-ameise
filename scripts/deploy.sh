@@ -1336,6 +1336,7 @@ setup_server() {
             err "docker compose up fehlgeschlagen"
             info "Bei 'Pool overlaps with other': Anderes Docker-Subnetz wählen: bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET}"
             info "Dort z.B. 172.22.0.0/16 oder 10.10.20.0/24 eintragen (nicht 172.20/172.21 wenn schon belegt)."
+            info "Bei 'container … is unhealthy': DB-Logs prüfen: docker logs ${DEPLOY_COMPOSE_PROJECT:-${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}}-db (beim ersten Start kann die DB-Initialisierung länger dauern)."
             exit 1
         }
 
@@ -1511,6 +1512,7 @@ do_update() {
         || {
             err "docker compose up fehlgeschlagen"
             info "Bei 'Pool overlaps with other': Anderes Docker-Subnetz: bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET}"
+            info "Bei 'container … is unhealthy': DB-Logs prüfen: docker logs ${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}-db (beim ersten Start kann die DB-Initialisierung länger dauern)."
             exit 1
         }
 
@@ -1864,6 +1866,7 @@ do_reconfigure() {
                 || {
                     err "docker compose up fehlgeschlagen"
                     info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"
+                    info "Bei 'unhealthy': docker logs ${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}-db"
                     exit 1
                 }
             $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d
@@ -1874,6 +1877,7 @@ do_reconfigure() {
                 || {
                     err "docker compose up fehlgeschlagen"
                     info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"
+                    info "Bei 'unhealthy': docker logs ${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}-db"
                     exit 1
                 }
             ;;
@@ -1883,6 +1887,7 @@ do_reconfigure() {
                 || {
                     err "docker compose up fehlgeschlagen"
                     info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"
+                    info "Bei 'unhealthy': docker logs ${COMPOSE_PROJECT_NAME:-${PROJECT_NAME}-${ENV_TARGET}}-db"
                     exit 1
                 }
             ;;
