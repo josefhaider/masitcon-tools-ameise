@@ -283,7 +283,16 @@ load_or_init_dirs() {
         # shellcheck source=/dev/null
         source "$DEPLOY_ENV_FILE"
     fi
-    # DIR_APP bleibt immer das Repo-Root wo das Script liegt
+    # Gespeichertes DIR_APP aus config.env laden (gesetzt nach Clone in setup_server)
+    local saved_cfg="${DIR_BASE}/config.env.${ENV_TARGET}"
+    [ -f "$saved_cfg" ] || saved_cfg="${DIR_BASE}/config.env"
+    if [ -f "$saved_cfg" ]; then
+        local saved_dir_app
+        saved_dir_app=$(grep '^DIR_APP=' "$saved_cfg" 2>/dev/null | cut -d= -f2-)
+        if [ -n "$saved_dir_app" ] && [ -d "$saved_dir_app" ]; then
+            DIR_APP="$saved_dir_app"
+        fi
+    fi
     DIR_CONFIGS="${DIR_BASE}/${ENV_TARGET}/configs"
 }
 
@@ -812,8 +821,35 @@ SMTP_USER=${SMTP_USER}
 SMTP_ADMIN_EMAIL=${SMTP_ADMIN_EMAIL}
 SMTP_SENDER_NAME=${SMTP_SENDER_NAME}
 DEPLOY_DOCKER_SUBNET=${DEPLOY_DOCKER_SUBNET}
+DIR_APP=${DIR_APP}
 SAVEDCFG
     chmod 600 "$cfg"
+}
+
+# ─── Repo klonen oder aktualisieren ─────────────────────────────
+# Klont das Repo in DIR_BASE/ENV_TARGET/app/ (Deployment-Verzeichnis).
+# Bei bestehendem Checkout: git pull. Setzt DIR_APP auf das Deployment-Dir.
+_clone_or_update_repo() {
+    local deploy_app_dir="${DIR_BASE}/${ENV_TARGET}/app"
+
+    if [ -d "${deploy_app_dir}/.git" ]; then
+        info "Repo bereits vorhanden – aktualisiere (${deploy_app_dir})..."
+        git -C "$deploy_app_dir" fetch origin \
+            || { err "git fetch fehlgeschlagen"; return 1; }
+        git -C "$deploy_app_dir" checkout "$DEPLOY_GIT_BRANCH" 2>/dev/null \
+            || warn "Branch-Wechsel fehlgeschlagen – bleibe auf aktuellem Branch"
+        git -C "$deploy_app_dir" pull origin "$DEPLOY_GIT_BRANCH" \
+            || { err "git pull fehlgeschlagen"; return 1; }
+    else
+        info "Klone Repo nach ${deploy_app_dir}..."
+        mkdir -p "$(dirname "$deploy_app_dir")" 2>/dev/null \
+            || { sudo mkdir -p "$(dirname "$deploy_app_dir")"; sudo chown "$(id -u):$(id -g)" "$(dirname "$deploy_app_dir")"; }
+        git clone --branch "$DEPLOY_GIT_BRANCH" "$DEPLOY_GIT_REMOTE" "$deploy_app_dir" \
+            || { err "git clone fehlgeschlagen (Remote: ${DEPLOY_GIT_REMOTE}, Branch: ${DEPLOY_GIT_BRANCH})"; return 1; }
+    fi
+
+    DIR_APP="$deploy_app_dir"
+    log "Repo: ${DIR_APP} ($(git -C "$DIR_APP" rev-parse --short HEAD 2>/dev/null || echo 'unbekannt'))"
 }
 
 # Sendet eine echte Test-E-Mail via curl um SMTP-Credentials zu verifizieren
@@ -1432,14 +1468,16 @@ setup_server() {
         mkdir -p "$d" 2>/dev/null || { sudo mkdir -p "$d"; sudo chown "$(id -u):$(id -g)" "$d"; }
     done
     log "Konfigurationsverzeichnisse erstellt: ${DIR_BASE}/"
-    log "Repo-Verzeichnis: ${DIR_APP}"
 
     # Log-Verzeichnis (Nginx nutzt /var/log/nginx)
     sudo mkdir -p "/var/log/nginx" 2>/dev/null || true
 
-    # Repo-Stand prüfen und aktualisieren
-    local git_hash; git_hash=$(git -C "$DIR_APP" rev-parse --short HEAD 2>/dev/null || echo 'unbekannt')
-    log "Repo: ${git_hash}"
+    # Repo in Deployment-Verzeichnis klonen (DIR_APP wird danach aktualisiert)
+    _clone_or_update_repo || { err "Repo-Clone/-Update fehlgeschlagen"; exit 1; }
+    log "Repo-Verzeichnis: ${DIR_APP}"
+
+    # Config erneut speichern – jetzt mit dem korrekten (geklonten) DIR_APP
+    _save_config
 
     # Env-Datei schreiben (enthält alle Secrets)
     write_env_file
@@ -1613,8 +1651,7 @@ do_update() {
     load_or_init_dirs
 
     if [ ! -d "${DIR_APP}/.git" ]; then
-        err "Kein Git-Repo unter ${DIR_APP}"
-        info "deploy.sh muss aus dem Repo-Verzeichnis heraus ausgeführt werden"
+        err "Kein Git-Repo unter ${DIR_APP} – zuerst Server-Setup ausführen: bash scripts/deploy.sh"
         exit 1
     fi
 
@@ -1622,12 +1659,12 @@ do_update() {
     local COMPOSE_FILE="${DIR_APP}/docker/docker-compose.yml"
     local SECRETS_FILE="${DIR_BASE}/secrets.env"
     [ -z "$DC" ] && { err "Docker Compose nicht gefunden"; exit 1; }
-    [ ! -f "$COMPOSE_FILE" ] && { err "docker/docker-compose.yml nicht gefunden"; exit 1; }
+    [ ! -f "$COMPOSE_FILE" ] && { err "docker/docker-compose.yml nicht gefunden unter ${DIR_APP}"; exit 1; }
     [ ! -f "$SECRETS_FILE" ] && { err "secrets.env nicht gefunden – zuerst Server-Setup ausführen"; exit 1; }
     _check_postgres_password "$SECRETS_FILE"
 
-    # Git pull
-    info "Ziehe neuesten Stand..."
+    # Deployment-Verzeichnis aktualisieren (git pull auf das geklonte Repo)
+    info "Ziehe neuesten Stand (${DIR_APP})..."
     git -C "$DIR_APP" fetch origin
     git -C "$DIR_APP" pull origin "$(git -C "$DIR_APP" rev-parse --abbrev-ref HEAD 2>/dev/null || echo master)"
     log "Repo aktualisiert: $(git -C "$DIR_APP" rev-parse --short HEAD 2>/dev/null)"
