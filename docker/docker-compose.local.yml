@@ -150,18 +150,20 @@ services:
       GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: ${ENABLE_ANONYMOUS_USERS:-false}
       GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM:-false}
 
-      # SMTP → Inbucket (kein echter Mail-Versand in lokaler Umgebung)
+      # SMTP – Standard: Inbucket (fängt E-Mails lokal ab, http://localhost:9000)
+      # Für echten Versand: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS in .env.local setzen.
       GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-admin@ameise.local}
-      GOTRUE_SMTP_HOST: inbucket
-      GOTRUE_SMTP_PORT: 2500
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-inbucket}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-2500}
       GOTRUE_SMTP_USER: ${SMTP_USER:-fake}
       GOTRUE_SMTP_PASS: ${SMTP_PASS:-fake}
       GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-Ameise Local}
+      GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: "true"
 
-      GOTRUE_MAILER_URLPATHS_INVITE: /auth/confirm
-      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/confirm
-      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/confirm
-      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/confirm
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/callback
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/callback
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/callback
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/callback
 
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
       GOTRUE_SMS_AUTOCONFIRM: "false"

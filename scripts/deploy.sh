@@ -519,9 +519,16 @@ DATA_TRANSFER_PASSWORD=ameise-local-transfer
 STUDIO_DEFAULT_ORGANIZATION=Masitcon
 STUDIO_DEFAULT_PROJECT=Ameise Local
 
-# SMTP → Inbucket (lokal, kein echter Versand)
+# SMTP – Standard: Inbucket (http://localhost:9000, kein echter Versand)
+# Für echten Versand: SMTP_HOST/PORT/USER/PASS ausfüllen (Inbucket wird dann ignoriert)
 SMTP_ADMIN_EMAIL=admin@ameise.local
-SMTP_SENDER_NAME="Ameise Local"
+SMTP_SENDER_NAME=Ameise Local
+SMTP_HOST=
+SMTP_PORT=
+SMTP_USER=
+SMTP_PASS=
+ENABLE_EMAIL_SIGNUP=true
+ENABLE_EMAIL_AUTOCONFIRM=false
 LOCALENV
     chmod 600 "$LOCAL_ENV_FILE"
     log "Lokale Secrets generiert: ${LOCAL_ENV_FILE}"
