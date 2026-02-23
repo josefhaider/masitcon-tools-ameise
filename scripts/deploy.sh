@@ -1239,6 +1239,7 @@ wait_for_health() {
 # nutzt config.env.${env}; ohne Parameter: aktuelle Umgebung.
 generate_nginx_config() {
     local target_env="${1:-$ENV_TARGET}"
+    local _saved_dir_base="$DIR_BASE"   # sichern – source kann DIR_BASE global überschreiben
     local dir_configs="${DIR_BASE}/${target_env}/configs"
     local conf_file="${dir_configs}/nginx-${target_env}.conf"
 
@@ -1248,6 +1249,7 @@ generate_nginx_config() {
     if [ -f "$cfg" ]; then
         # shellcheck source=/dev/null
         source "$cfg"
+        DIR_BASE="$_saved_dir_base"     # wiederherstellen, damit do_setup_nginx den richtigen Pfad sieht
     fi
     local log_dir="/var/log/nginx"
     mkdir -p "$dir_configs" 2>/dev/null || { sudo mkdir -p "$dir_configs"; sudo chown "$(id -u):$(id -g)" "$dir_configs"; }
@@ -1323,6 +1325,14 @@ server {
     return 301 https://\$host\$request_uri;
 }
 REDIRECT
+    fi
+
+    # Prüfen ob die Datei wirklich angelegt wurde (cat > schlägt sonst still fehl)
+    if [ ! -f "$conf_file" ] || [ ! -s "$conf_file" ]; then
+        err "Nginx-Config konnte nicht geschrieben werden: ${conf_file}"
+        info "  Schreibrecht prüfen: sudo chown \$(id -u):\$(id -g) ${dir_configs}"
+        info "  Oder manuell generieren und als root ablegen"
+        return 1
     fi
 
     log "Nginx-Konfiguration: ${conf_file}"
@@ -1825,7 +1835,15 @@ do_setup_nginx() {
         warn "sudo fehlgeschlagen (Passwort nötig?). Alternativ: sudo bash scripts/deploy.sh --setup-nginx"
     fi
 
-    for env in production staging; do
+    # Wenn --env explizit gesetzt: nur diese Umgebung verarbeiten, sonst beide
+    local envs_to_process
+    if [ "$ENV_EXPLICIT" = true ]; then
+        envs_to_process="$ENV_TARGET"
+    else
+        envs_to_process="production staging"
+    fi
+
+    for env in $envs_to_process; do
         local cfg="${DIR_BASE}/config.env.${env}"
         [ -f "$cfg" ] || cfg="${DIR_BASE}/config.env"
         if [ ! -f "$cfg" ]; then
@@ -1835,9 +1853,13 @@ do_setup_nginx() {
             continue
         fi
 
-        generate_nginx_config "$env"
+        # conf_file VOR generate_nginx_config() berechnen (DIR_BASE-Restore in der Funktion
+        # schützt ebenfalls, aber doppelte Absicherung ist robuster)
         local conf_file="${DIR_BASE}/${env}/configs/nginx-${env}.conf"
         local target_name="${NGINX_SITE_NAME}-${env}.conf"
+        generate_nginx_config "$env"
+        # Pfad neu bestätigen – nach DIR_BASE-Restore sollte er identisch sein
+        conf_file="${DIR_BASE}/${env}/configs/nginx-${env}.conf"
         local file_available="${nginx_available}/${target_name}"
         local link_enabled="${nginx_enabled}/${target_name}"
 
