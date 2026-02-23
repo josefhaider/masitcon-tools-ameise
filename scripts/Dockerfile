@@ -8,8 +8,11 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Dependencies (inkl. devDependencies für Build)
+# --mount=type=cache: npm-Download-Cache wird zwischen Builds wiederverwendet
+# → verhindert komplettes Re-Download aller Pakete bei jedem Build
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline
 
 # Build (VITE_* zur Build-Zeit; BUILD_MODE = production|staging)
 COPY . .
@@ -35,7 +38,8 @@ FROM node:20-alpine
 WORKDIR /app
 
 # serve für statische Dateien
-RUN npm install -g serve
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -g serve
 
 COPY --from=builder /app/dist ./dist
 
