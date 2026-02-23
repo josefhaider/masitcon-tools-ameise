@@ -128,6 +128,39 @@ _show_db_crash_logs() {
     fi
 }
 
+# Baut Docker-Images mit vollem Output (--progress=plain) und zeigt bei Fehler
+# die letzten 60 Zeilen des Build-Logs für schnelle Diagnose.
+# Aufruf: _build_stack DC COMPOSE_FILE SECRETS_FILE [service1 service2 ...]
+_build_stack() {
+    local dc="$1" compose_file="$2" secrets_file="$3"
+    shift 3
+    local services=("$@")   # leer = alle Services
+
+    local build_log; build_log="${DIR_BASE}/build-$(date +%Y%m%d-%H%M%S).log"
+
+    info "Baue Docker-Images (Log: ${build_log})..."
+    if [ ${#services[@]} -gt 0 ]; then
+        $dc --env-file "$secrets_file" -f "$compose_file" \
+            build --progress=plain "${services[@]}" 2>&1 | tee "$build_log"
+    else
+        $dc --env-file "$secrets_file" -f "$compose_file" \
+            build --progress=plain 2>&1 | tee "$build_log"
+    fi
+
+    local build_exit=${PIPESTATUS[0]}
+    if [ "$build_exit" -ne 0 ]; then
+        err "Docker-Build fehlgeschlagen (exit ${build_exit})"
+        echo ""
+        warn "── Letzte Build-Ausgabe ────────────────────────────────────────────"
+        tail -60 "$build_log" | sed 's/^/  /'
+        echo ""
+        info "Vollständiges Build-Log: ${build_log}"
+        info "Manuell bauen: $dc --env-file ${secrets_file} -f ${compose_file} build --no-cache --progress=plain"
+        return 1
+    fi
+    return 0
+}
+
 detect_compose() {
     if docker compose version >/dev/null 2>&1; then echo "docker compose"
     elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"
@@ -1382,7 +1415,10 @@ setup_server() {
     _check_postgres_password "$SECRETS_FILE"
 
     info "Baue und starte Stack (${DEPLOY_COMPOSE_PROJECT})..."
-    $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build \
+    _build_stack "$DC" "$COMPOSE_FILE" "$SECRETS_FILE" \
+        || { _show_db_crash_logs; exit 1; }
+
+    $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d \
         || {
             err "docker compose up fehlgeschlagen"
             info "Bei 'Pool overlaps with other': Anderes Docker-Subnetz wählen: bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET}"
@@ -1560,16 +1596,17 @@ do_update() {
 
     # App-Container neu bauen (VITE_* aus secrets.env)
     info "Baue App-Container neu (VITE_SUPABASE_URL wird neu eingebettet)..."
-    $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build app \
+    _build_stack "$DC" "$COMPOSE_FILE" "$SECRETS_FILE" app \
+        || { _show_db_crash_logs; exit 1; }
+
+    # Alle Container starten (app wurde oben schon gebaut)
+    $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d \
         || {
             err "docker compose up fehlgeschlagen"
             info "Bei 'Pool overlaps with other': Anderes Docker-Subnetz: bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET}"
             _show_db_crash_logs
             exit 1
         }
-
-    # Andere Container nur neu starten (nicht neu bauen)
-    $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d
 
     wait_for_health "$DC" "$COMPOSE_FILE" "$SECRETS_FILE"
 
@@ -1985,18 +2022,21 @@ do_reconfigure() {
     case "$restart_choice" in
         2)
             info "Baue App-Container neu..."
-            $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build app \
+            _build_stack "$DC" "$COMPOSE_FILE" "$SECRETS_FILE" app \
+                || { _show_db_crash_logs; exit 1; }
+            $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d \
                 || {
                     err "docker compose up fehlgeschlagen"
                     info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"
                     _show_db_crash_logs
                     exit 1
                 }
-            $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d
             ;;
         3)
             info "Baue alle Container neu..."
-            $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d --build \
+            _build_stack "$DC" "$COMPOSE_FILE" "$SECRETS_FILE" \
+                || { _show_db_crash_logs; exit 1; }
+            $DC --env-file "$SECRETS_FILE" -f "$COMPOSE_FILE" up -d \
                 || {
                     err "docker compose up fehlgeschlagen"
                     info "Bei 'Pool overlaps': bash scripts/deploy.sh --reconfigure --env ${ENV_TARGET} → anderes Docker-Subnetz"

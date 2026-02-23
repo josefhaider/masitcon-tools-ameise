@@ -18,6 +18,8 @@ ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY
 ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
 ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+# Verhindert OOM-Kill auf Servern mit wenig RAM (Node beansprucht sonst >2GB)
+ENV NODE_OPTIONS="--max-old-space-size=1536"
 RUN npm run build:${BUILD_MODE}
 
 # Produktions-Stage
