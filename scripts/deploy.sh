@@ -17,6 +17,7 @@
 # Aufräumen:       bash scripts/deploy.sh --prune
 # Nur Migrationen: bash scripts/deploy.sh --migrate
 # Backup:          bash scripts/deploy.sh --backup
+# Restore:         bash scripts/deploy.sh --restore <dump-datei>
 # Port-Check:      bash scripts/deploy.sh --check-ports
 # Nginx-Setup:     bash scripts/deploy.sh --setup-nginx
 #
@@ -201,6 +202,7 @@ ENV_TARGET="production"
 ENV_EXPLICIT=false
 SHOW_LOGS_SERVICE=""
 CLEAN_FULL=false
+RESTORE_FILE=""
 CLI_BASE_DIR=""   # überschreibt interaktive Abfrage wenn gesetzt
 
 while [[ $# -gt 0 ]]; do
@@ -216,6 +218,7 @@ while [[ $# -gt 0 ]]; do
         --prune)   MODE="prune";   shift ;;
         --migrate)      MODE="migrate";      shift ;;
         --backup)       MODE="backup";       shift ;;
+        --restore)      MODE="restore"; RESTORE_FILE="${2:-}"; shift; [[ $# -gt 0 ]] && shift || true ;;
         --check-ports)   MODE="check-ports";   shift ;;
         --reconfigure)   MODE="reconfigure";   shift ;;
         --clone-repo)    MODE="clone-repo";    shift ;;
@@ -235,6 +238,7 @@ Modi:
   --update           Container updaten und neu starten
   --migrate          Nur Datenbankmigrationen ausführen
   --backup           Datenbank-Backup erstellen
+  --restore FILE     Datenbank aus Dump-Datei wiederherstellen
   --status           Alle Container und Ressourcen anzeigen
   --logs             Container-Logs anzeigen (live)
   --stop             Alle Container stoppen
@@ -2096,6 +2100,83 @@ do_backup() {
         || err "Backup fehlgeschlagen (supabase start ausgeführt?)"
 }
 
+do_restore() {
+    header "Datenbank-Restore"
+
+    # Dump-Datei ermitteln
+    local dump_file="${RESTORE_FILE:-}"
+    [[ -z "$dump_file" ]] && ask "Pfad zur Dump-Datei (.dump oder .sql)" dump_file
+    [[ -f "$dump_file" ]] || { err "Datei nicht gefunden: ${dump_file}"; exit 1; }
+    dump_file="$(realpath "$dump_file")"
+
+    # Container und Credentials ermitteln (lokal vs. Server)
+    local project_name pg_password
+    if docker ps --format '{{.Names}}' | grep -q "ameise-local-db"; then
+        project_name="ameise-local"
+        pg_password="$(grep POSTGRES_PASSWORD "${_SCRIPT_DIR}/../docker/.env.local" 2>/dev/null | cut -d= -f2)"
+    else
+        project_name="ameise-${ENV_TARGET}"
+        load_or_init_dirs
+        local cfg="${DIR_BASE}/secrets.env"
+        [ -f "$cfg" ] || { err "Keine Konfiguration unter ${DIR_BASE} gefunden"; exit 1; }
+        # shellcheck source=/dev/null
+        source "$cfg"
+        pg_password="${POSTGRES_PASSWORD:-}"
+    fi
+
+    [[ -z "$pg_password" ]] && { err "POSTGRES_PASSWORD konnte nicht ermittelt werden"; exit 1; }
+
+    warn "ACHTUNG: Alle bestehenden Daten werden überschrieben!"
+    confirm "Fortfahren?" || { info "Abgebrochen."; exit 0; }
+    confirm "Wirklich? Daten gehen verloren!" || { info "Abgebrochen."; exit 0; }
+
+    # Abhängige Services pausieren
+    log "Services pausieren..."
+    docker stop "${project_name}-auth" "${project_name}-rest" \
+                "${project_name}-storage" "${project_name}-api" \
+                "${project_name}-studio" "${project_name}-meta" 2>/dev/null || true
+
+    # Restore via PG17-Proxy (unterstützt Dump-Format v1.16 von PG17-Tools)
+    log "Restore startet: $(basename "$dump_file") → ${project_name}-db ..."
+    if docker run --rm \
+        --network "${project_name}_default" \
+        -v "${dump_file}:/tmp/restore.dump:ro" \
+        -e PGPASSWORD="${pg_password}" \
+        postgres:17-alpine \
+        pg_restore \
+            -h "${project_name}-db" \
+            -U postgres \
+            -d postgres \
+            --no-owner \
+            --no-acl \
+            --clean \
+            --if-exists \
+            /tmp/restore.dump; then
+        log "Restore erfolgreich."
+    else
+        local rc=$?
+        # Exitcode 1 = Warnungen (z.B. Supabase-interne Objekte) – kein Fehler
+        if [[ $rc -eq 1 ]]; then
+            warn "Restore mit Warnungen abgeschlossen (Supabase-interne Objekte übersprungen – normal)."
+        else
+            err "Restore fehlgeschlagen (exitcode ${rc})."
+            docker start "${project_name}-auth" "${project_name}-rest" \
+                         "${project_name}-storage" "${project_name}-api" \
+                         "${project_name}-studio" "${project_name}-meta" 2>/dev/null || true
+            exit 1
+        fi
+    fi
+
+    # Services wieder starten
+    log "Services neu starten..."
+    docker start "${project_name}-auth" "${project_name}-rest" \
+                 "${project_name}-storage" "${project_name}-api" \
+                 "${project_name}-studio" "${project_name}-meta" 2>/dev/null || true
+
+    log "Fertig."
+    info "App erreichbar unter http://localhost:${APP_PORT:-8080}"
+}
+
 do_clone_repo() {
     header "Repo ins Deployment-Verzeichnis klonen – ${PROJECT_DISPLAY} (${ENV_TARGET})"
     load_or_init_dirs
@@ -2268,6 +2349,7 @@ main() {
         prune)   do_prune    ;;
         migrate)      do_migrate      ;;
         backup)       do_backup       ;;
+        restore)      do_restore      ;;
         check-ports)  do_check_ports  ;;
         reconfigure)     do_reconfigure     ;;
         clone-repo)      do_clone_repo      ;;
