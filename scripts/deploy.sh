@@ -2091,13 +2091,49 @@ do_setup_nginx() {
 }
 
 do_backup() {
-    header "Backup"
-    check_supabase_cli
-    local ts; ts=$(date +%Y%m%d-%H%M%S)
-    mkdir -p supabase/backups
-    supabase db dump -f "supabase/backups/dump-${ts}.sql" 2>/dev/null \
-        && log "Backup: supabase/backups/dump-${ts}.sql" \
-        || err "Backup fehlgeschlagen (supabase start ausgeführt?)"
+    header "Datenbank-Backup"
+
+    # Container und Credentials ermitteln (lokal vs. Server)
+    local project_name pg_password backup_dir ts
+    if docker ps --format '{{.Names}}' | grep -q "ameise-local-db"; then
+        project_name="ameise-local"
+        pg_password="$(grep POSTGRES_PASSWORD "${_SCRIPT_DIR}/../docker/.env.local" 2>/dev/null | cut -d= -f2)"
+        backup_dir="${_SCRIPT_DIR}/../Backup"
+    else
+        project_name="ameise-${ENV_TARGET}"
+        load_or_init_dirs
+        local cfg="${DIR_BASE}/secrets.env"
+        [ -f "$cfg" ] || { err "Keine Konfiguration unter ${DIR_BASE} gefunden"; exit 1; }
+        # shellcheck source=/dev/null
+        source "$cfg"
+        pg_password="${POSTGRES_PASSWORD:-}"
+        backup_dir="${DIR_BASE}/backups"
+    fi
+
+    [[ -z "$pg_password" ]] && { err "POSTGRES_PASSWORD konnte nicht ermittelt werden"; exit 1; }
+
+    ts=$(date +%Y%m%d-%H%M%S)
+    mkdir -p "$backup_dir"
+
+    log "Erstelle Backup von ${project_name}-db ..."
+    docker exec -e PGPASSWORD="${pg_password}" "${project_name}-db" \
+        pg_dump -U postgres -F c -f "/tmp/backup-${ts}.dump" postgres \
+        && docker cp "${project_name}-db:/tmp/backup-${ts}.dump" \
+                     "${backup_dir}/dump-${ts}.dump" \
+        && docker exec "${project_name}-db" rm "/tmp/backup-${ts}.dump" \
+        && log "Backup gespeichert: ${backup_dir}/dump-${ts}.dump"
+
+    # Rotation: Backups älter als 14 Tage löschen
+    local deleted
+    deleted=$(find "$backup_dir" -name "dump-*.dump" -mtime +14 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "${deleted}" -gt 0 ]]; then
+        find "$backup_dir" -name "dump-*.dump" -mtime +14 -delete
+        log "Rotation: ${deleted} alte Backup(s) gelöscht."
+    fi
+
+    echo ""
+    info "Backup abgeschlossen: ${backup_dir}/dump-${ts}.dump"
+    info "Mit 'deploy.sh --restore ${backup_dir}/dump-${ts}.dump' kann es wieder eingespielt werden."
 }
 
 do_restore() {
@@ -2165,6 +2201,65 @@ do_restore() {
                          "${project_name}-studio" "${project_name}-meta" 2>/dev/null || true
             exit 1
         fi
+    fi
+
+    # Supabase-Rollen-Passwörter auf lokales Passwort zurücksetzen
+    # (Dump enthält Produktions-Passwörter – PostgREST/Auth würden sonst nicht verbinden)
+    log "Supabase-Rollen-Passwörter synchronisieren..."
+    docker exec "${project_name}-db" psql -U supabase_admin -c \
+        "ALTER ROLE authenticator WITH PASSWORD '${pg_password}';
+         ALTER ROLE supabase_auth_admin WITH PASSWORD '${pg_password}';
+         ALTER ROLE pgbouncer WITH PASSWORD '${pg_password}';" 2>/dev/null \
+        && log "Rollen-Passwörter gesetzt." \
+        || warn "Rollen-Passwort-Reset übersprungen (supabase_admin nicht verfügbar)."
+
+    # UUID-Konsistenz prüfen und ggf. reparieren
+    # (tritt auf wenn Dump aus Umgebung mit UUID-Mismatch zwischen auth.users und profiles stammt)
+    log "UUID-Konsistenz prüfen..."
+    local mismatch
+    mismatch=$(docker exec "${project_name}-db" psql -U postgres -tAc \
+        "SELECT COUNT(*) FROM auth.users au
+         JOIN public.profiles p ON au.email = p.email
+         WHERE au.id != p.id;" 2>/dev/null || echo "0")
+    mismatch="${mismatch//[^0-9]/}"
+
+    if [[ "${mismatch:-0}" -gt 0 ]]; then
+        warn "${mismatch} Profile mit UUID-Mismatch gefunden – korrigiere automatisch..."
+        docker exec "${project_name}-db" psql -U supabase_admin << 'UUIDFIX'
+BEGIN;
+CREATE TEMP TABLE _uuid_map AS
+  SELECT au.id AS new_uuid, p.id AS old_uuid
+  FROM auth.users au JOIN public.profiles p ON au.email = p.email
+  WHERE au.id != p.id;
+ALTER TABLE public.time_entries       DROP CONSTRAINT IF EXISTS time_entries_user_id_fkey;
+ALTER TABLE public.user_roles         DROP CONSTRAINT IF EXISTS user_roles_user_id_fkey;
+ALTER TABLE public.team_members       DROP CONSTRAINT IF EXISTS team_members_user_id_fkey;
+ALTER TABLE public.employee_work_schedules DROP CONSTRAINT IF EXISTS employee_work_schedules_user_id_fkey;
+ALTER TABLE public.balance_corrections DROP CONSTRAINT IF EXISTS balance_corrections_user_id_fkey;
+ALTER TABLE public.absences           DROP CONSTRAINT IF EXISTS absences_user_id_fkey;
+ALTER TABLE public.absences           DROP CONSTRAINT IF EXISTS absences_approved_by_fkey;
+ALTER TABLE public.audit_logs         DROP CONSTRAINT IF EXISTS audit_logs_user_id_fkey;
+UPDATE public.time_entries       SET user_id    = m.new_uuid FROM _uuid_map m WHERE user_id    = m.old_uuid;
+UPDATE public.user_roles         SET user_id    = m.new_uuid FROM _uuid_map m WHERE user_id    = m.old_uuid;
+UPDATE public.team_members       SET user_id    = m.new_uuid FROM _uuid_map m WHERE user_id    = m.old_uuid;
+UPDATE public.employee_work_schedules SET user_id = m.new_uuid FROM _uuid_map m WHERE user_id  = m.old_uuid;
+UPDATE public.balance_corrections SET user_id   = m.new_uuid FROM _uuid_map m WHERE user_id   = m.old_uuid;
+UPDATE public.absences           SET user_id    = m.new_uuid FROM _uuid_map m WHERE user_id    = m.old_uuid;
+UPDATE public.absences           SET approved_by = m.new_uuid FROM _uuid_map m WHERE approved_by = m.old_uuid;
+UPDATE public.audit_logs         SET user_id    = m.new_uuid FROM _uuid_map m WHERE user_id    = m.old_uuid;
+UPDATE public.profiles           SET id = m.new_uuid FROM _uuid_map m WHERE id = m.old_uuid;
+ALTER TABLE public.time_entries       ADD CONSTRAINT time_entries_user_id_fkey       FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.user_roles         ADD CONSTRAINT user_roles_user_id_fkey         FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.team_members       ADD CONSTRAINT team_members_user_id_fkey       FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.employee_work_schedules ADD CONSTRAINT employee_work_schedules_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.balance_corrections ADD CONSTRAINT balance_corrections_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.absences           ADD CONSTRAINT absences_user_id_fkey           FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE SET NULL;
+ALTER TABLE public.absences           ADD CONSTRAINT absences_approved_by_fkey       FOREIGN KEY (approved_by) REFERENCES public.profiles(id) ON DELETE SET NULL;
+COMMIT;
+UUIDFIX
+        log "UUID-Fix abgeschlossen."
+    else
+        log "UUIDs konsistent – kein Fix nötig."
     fi
 
     # Services wieder starten
@@ -2331,7 +2426,7 @@ main() {
 
     # Umgebung abfragen, wenn für diesen Modus nötig und nicht per --env gesetzt
     case "$MODE" in
-        update|status|logs|stop|restart|clean|backup|reconfigure|clone-repo|sync-migrations)
+        update|status|logs|stop|restart|clean|reconfigure|clone-repo|sync-migrations)
             ask_env_target
             echo -e "  ${DIM}Umgebung: ${ENV_TARGET}${NC}"
             echo ""
