@@ -2172,35 +2172,37 @@ do_restore() {
                 "${project_name}-storage" "${project_name}-api" \
                 "${project_name}-studio" "${project_name}-meta" 2>/dev/null || true
 
-    # Restore via PG17-Proxy (unterstützt Dump-Format v1.16 von PG17-Tools)
+    # Dump in den DB-Container kopieren und direkt mit pg_restore darin ausführen
+    # (kein externer Proxy-Container nötig – funktioniert für PG15 und PG17 Dumps)
     log "Restore startet: $(basename "$dump_file") → ${project_name}-db ..."
-    if docker run --rm \
-        --network "${project_name}_default" \
-        -v "${dump_file}:/tmp/restore.dump:ro" \
-        -e PGPASSWORD="${pg_password}" \
-        postgres:17-alpine \
+    docker cp "${dump_file}" "${project_name}-db:/tmp/restore.dump"
+
+    local restore_rc
+    docker exec -e PGPASSWORD="${pg_password}" "${project_name}-db" \
         pg_restore \
-            -h "${project_name}-db" \
             -U postgres \
             -d postgres \
             --no-owner \
             --no-acl \
             --clean \
             --if-exists \
-            /tmp/restore.dump; then
+            /tmp/restore.dump
+    restore_rc=$?
+
+    # Temporäre Dump-Datei im Container wieder entfernen
+    docker exec "${project_name}-db" rm -f /tmp/restore.dump 2>/dev/null || true
+
+    if [[ $restore_rc -eq 0 ]]; then
         log "Restore erfolgreich."
-    else
-        local rc=$?
+    elif [[ $restore_rc -eq 1 ]]; then
         # Exitcode 1 = Warnungen (z.B. Supabase-interne Objekte) – kein Fehler
-        if [[ $rc -eq 1 ]]; then
-            warn "Restore mit Warnungen abgeschlossen (Supabase-interne Objekte übersprungen – normal)."
-        else
-            err "Restore fehlgeschlagen (exitcode ${rc})."
-            docker start "${project_name}-auth" "${project_name}-rest" \
-                         "${project_name}-storage" "${project_name}-api" \
-                         "${project_name}-studio" "${project_name}-meta" 2>/dev/null || true
-            exit 1
-        fi
+        warn "Restore mit Warnungen abgeschlossen (Supabase-interne Objekte übersprungen – normal)."
+    else
+        err "Restore fehlgeschlagen (exitcode ${restore_rc})."
+        docker start "${project_name}-auth" "${project_name}-rest" \
+                     "${project_name}-storage" "${project_name}-api" \
+                     "${project_name}-studio" "${project_name}-meta" 2>/dev/null || true
+        exit 1
     fi
 
     # Supabase-Rollen-Passwörter auf lokales Passwort zurücksetzen
