@@ -12,6 +12,7 @@ supabase/.env
 supabase/config.toml
 supabase/config.toml.bak
 supabase/backups/
+Backup/
 supabase/snippets/
 .claude_reference/
 import_vinzenz_krautz_2025.sql
