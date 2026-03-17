@@ -19,7 +19,7 @@ services:
   # Supabase-Postgres mit vorinstallierten Extensions (pgcrypto, pgjwt, etc.)
   # Init-Scripts laufen NUR beim ersten Start (leeres Volume).
   db:
-    container_name: ${COMPOSE_PROJECT_NAME}-db
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-production}-db
     image: supabase/postgres:15.8.1.085
     restart: unless-stopped
     ports:
@@ -59,7 +59,7 @@ services:
   # Einziger Supabase-Service mit externem Port (127.0.0.1-only).
   # Nginx/Caddy routet /supabase/* → Kong (nach Strip des /supabase-Präfixes).
   kong:
-    container_name: ${COMPOSE_PROJECT_NAME}-kong
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-production}-kong
     image: kong:2.8.1
     restart: unless-stopped
     ports:
@@ -84,7 +84,7 @@ services:
   # ── PostgREST ─────────────────────────────────────────────────────
   # REST API für PostgreSQL. Kein externer Port (nur via Kong).
   rest:
-    container_name: ${COMPOSE_PROJECT_NAME}-rest
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-production}-rest
     image: postgrest/postgrest:v14.5
     restart: unless-stopped
     depends_on:
@@ -105,7 +105,7 @@ services:
   # extra_hosts: SITE_HOSTNAME → host-gateway damit GoTrue E-Mail-Links
   # aus dem Container heraus auflösen kann.
   auth:
-    container_name: ${COMPOSE_PROJECT_NAME}-auth
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-production}-auth
     image: supabase/gotrue:v2.186.0
     restart: unless-stopped
     extra_hosts:
@@ -148,6 +148,8 @@ services:
       GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
       GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-Ameise}
 
+      GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: "true"
+
       GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
       GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/v1/verify
       GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
@@ -159,7 +161,7 @@ services:
   # ── Storage API ───────────────────────────────────────────────────
   # Datei-Storage. Kein externer Port (nur via Kong).
   storage:
-    container_name: ${COMPOSE_PROJECT_NAME}-storage
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-production}-storage
     image: supabase/storage-api:v1.37.8
     restart: unless-stopped
     depends_on:
@@ -195,7 +197,7 @@ services:
   # REST-API für DB-Schema-Inspektion (wird von Studio benötigt).
   # Kein externer Port.
   meta:
-    container_name: ${COMPOSE_PROJECT_NAME}-meta
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-production}-meta
     image: supabase/postgres-meta:v0.95.2
     restart: unless-stopped
     depends_on:
@@ -214,7 +216,7 @@ services:
   # Web-UI für DB-Verwaltung. Nur auf 127.0.0.1 (Zugang via SSH-Tunnel).
   # ssh -L 3100:127.0.0.1:STUDIO_PORT user@server → Browser: http://localhost:3100
   studio:
-    container_name: ${COMPOSE_PROJECT_NAME}-studio
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-production}-studio
     image: supabase/studio:2026.02.16-sha-26c615c
     restart: unless-stopped
     ports:
@@ -252,7 +254,7 @@ services:
   # NEXT_PUBLIC_* werden zur BUILD-ZEIT eingebettet (Browser-Bundle).
   # Server-seitige Env-Vars (SUPABASE_SERVICE_ROLE_KEY etc.) zur Laufzeit.
   app:
-    container_name: ${COMPOSE_PROJECT_NAME}-app
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-production}-app
     build:
       context: ..
       dockerfile: Dockerfile
@@ -275,15 +277,15 @@ services:
 
 volumes:
   db-data:
-    name: ${COMPOSE_PROJECT_NAME}-db-data
+    name: ${COMPOSE_PROJECT_NAME:-ameise-production}-db-data
   db-config:
-    name: ${COMPOSE_PROJECT_NAME}-db-config
+    name: ${COMPOSE_PROJECT_NAME:-ameise-production}-db-config
   storage-data:
-    name: ${COMPOSE_PROJECT_NAME}-storage-data
+    name: ${COMPOSE_PROJECT_NAME:-ameise-production}-storage-data
 
 networks:
   default:
-    name: ${COMPOSE_PROJECT_NAME}-net
+    name: ${COMPOSE_PROJECT_NAME:-ameise-production}-net
     driver: bridge
     ipam:
       config:

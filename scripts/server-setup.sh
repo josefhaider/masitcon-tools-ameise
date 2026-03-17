@@ -600,36 +600,41 @@ generate_secrets() {
     if [ -n "${JWT_SECRET:-}" ] && [ -n "${POSTGRES_PASSWORD:-}" ] && \
        [ -n "${ANON_KEY:-}" ]   && [ -n "${SERVICE_ROLE_KEY:-}" ]; then
         log "Secrets bereits vorhanden -- unveraendert."
-        return 0
+    else
+        info "Generiere Secrets..."
+
+        if [ -z "${JWT_SECRET:-}" ]; then
+            JWT_SECRET=$(openssl rand -hex 40)
+            POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/\n' | head -c 32)
+
+            local iat exp hdr pld sig
+            iat=$(date +%s); exp=4102444800
+            hdr=$(printf '{"alg":"HS256","typ":"JWT"}' | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+
+            pld=$(printf '{"role":"anon","iss":"supabase","iat":%d,"exp":%d}' "$iat" "$exp" \
+                | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+            sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary \
+                | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+            ANON_KEY="${hdr}.${pld}.${sig}"
+
+            pld=$(printf '{"role":"service_role","iss":"supabase","iat":%d,"exp":%d}' "$iat" "$exp" \
+                | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+            sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary \
+                | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+            SERVICE_ROLE_KEY="${hdr}.${pld}.${sig}"
+
+            log "Alle Secrets generiert."
+        else
+            [ -z "${POSTGRES_PASSWORD:-}" ] && \
+                POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/\n' | head -c 32)
+            log "Fehlende Secrets ergaenzt."
+        fi
     fi
 
-    info "Generiere Secrets..."
-
-    if [ -z "${JWT_SECRET:-}" ]; then
-        JWT_SECRET=$(openssl rand -hex 40)
-        POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/\n' | head -c 32)
-
-        local iat exp hdr pld sig
-        iat=$(date +%s); exp=4102444800
-        hdr=$(printf '{"alg":"HS256","typ":"JWT"}' | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
-
-        pld=$(printf '{"role":"anon","iss":"supabase","iat":%d,"exp":%d}' "$iat" "$exp" \
-            | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
-        sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary \
-            | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
-        ANON_KEY="${hdr}.${pld}.${sig}"
-
-        pld=$(printf '{"role":"service_role","iss":"supabase","iat":%d,"exp":%d}' "$iat" "$exp" \
-            | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
-        sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary \
-            | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
-        SERVICE_ROLE_KEY="${hdr}.${pld}.${sig}"
-
-        log "Alle Secrets generiert."
-    else
-        [ -z "${POSTGRES_PASSWORD:-}" ] && \
-            POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/\n' | head -c 32)
-        log "Fehlende Secrets ergaenzt."
+    # PG_META_CRYPTO_KEY nur generieren wenn nicht bereits vorhanden (aus config.env)
+    if [ -z "${PG_META_CRYPTO_KEY:-}" ]; then
+        PG_META_CRYPTO_KEY=$(openssl rand -hex 32)
+        log "PG_META_CRYPTO_KEY generiert."
     fi
 }
 
@@ -688,6 +693,7 @@ save_config() {
         echo "POSTGRES_PASSWORD=\"$POSTGRES_PASSWORD\""
         echo "ANON_KEY=\"$ANON_KEY\""
         echo "SERVICE_ROLE_KEY=\"$SERVICE_ROLE_KEY\""
+        echo "PG_META_CRYPTO_KEY=\"${PG_META_CRYPTO_KEY}\""
     } > "$file"
 
     chmod 600 "$file"
@@ -701,8 +707,7 @@ generate_docker_env() {
     local api_external_url="${PROTOCOL}://${APP_HOSTNAME}/supabase"
     local site_url="${PROTOCOL}://${APP_HOSTNAME}"
     local redirect_urls="http://127.0.0.1:3000,https://127.0.0.1:3000,${site_url}"
-    local pg_meta_crypto_key
-    pg_meta_crypto_key=$(openssl rand -hex 32)
+    local pg_meta_crypto_key="${PG_META_CRYPTO_KEY}"
     local docker_subnet="${DOCKER_SUBNET:-172.20.0.0/16}"
 
     cat > "$file" << EOF
@@ -908,12 +913,13 @@ sync_db_passwords() {
 
     info "Synchronisiere DB-Passwoerter..."
 
+    # Dollar-Quoting ($pwd$...$pwd$) statt einfache Quotes -- sicher bei Sonderzeichen im Passwort
     local sql
-    sql="ALTER USER authenticator            WITH PASSWORD '${pg_pass}';
-         ALTER USER supabase_auth_admin      WITH PASSWORD '${pg_pass}';
-         ALTER USER supabase_storage_admin   WITH PASSWORD '${pg_pass}';
-         ALTER USER supabase_functions_admin WITH PASSWORD '${pg_pass}';
-         ALTER USER pgbouncer                WITH PASSWORD '${pg_pass}';"
+    sql="ALTER USER authenticator            WITH PASSWORD \$pwd\$${pg_pass}\$pwd\$;
+         ALTER USER supabase_auth_admin      WITH PASSWORD \$pwd\$${pg_pass}\$pwd\$;
+         ALTER USER supabase_storage_admin   WITH PASSWORD \$pwd\$${pg_pass}\$pwd\$;
+         ALTER USER supabase_functions_admin WITH PASSWORD \$pwd\$${pg_pass}\$pwd\$;
+         ALTER USER pgbouncer                WITH PASSWORD \$pwd\$${pg_pass}\$pwd\$;"
 
     local output
     if output=$($compose_cmd -f docker/docker-compose.yml exec -T db \

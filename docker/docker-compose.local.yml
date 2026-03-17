@@ -261,7 +261,7 @@ services:
   # SMTP: Port 2500 (intern, von GoTrue genutzt)
   inbucket:
     container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-inbucket
-    image: inbucket/inbucket:latest
+    image: inbucket/inbucket:v3.1.1
     restart: unless-stopped
     ports:
       - "0.0.0.0:${INBUCKET_WEB_PORT:-9000}:9000"

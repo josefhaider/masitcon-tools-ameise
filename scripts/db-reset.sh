@@ -17,6 +17,12 @@ fi
 echo "WARNUNG: Alle Daten werden geloescht!"
 echo "Migrationen werden danach automatisch neu angewendet."
 echo ""
+read -rp "Bist du sicher? [j/N]: " confirm
+if [[ ! "$confirm" =~ ^[jJyY]$ ]]; then
+  echo "Abgebrochen."
+  exit 0
+fi
+echo ""
 docker compose -f docker/docker-compose.local.yml --env-file "$ENV_FILE" down -v
 bash "$SCRIPT_DIR/db-start.sh"
 bash "$SCRIPT_DIR/apply-migration.sh"

@@ -171,6 +171,9 @@ body {
   --color-sidebar-accent: #465fff;
   --color-overlay: rgba(16, 24, 40, 0.45);
 
+  /* ===== Masitcon Brand – Turquoise (Auth-Buttons, Links) ===== */
+  --color-masitcon-turquoise: #0891b2;
+
   /* ===== Shadows ===== */
   --shadow-theme-md:
     0px 4px 8px -2px rgba(16, 24, 40, 0.1),

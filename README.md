@@ -6,39 +6,85 @@ Professionelle Arbeitszeiterfassungs-Suite fuer masitcon.
 
 ## Tech Stack
 
-- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui
-- **Backend**: Supabase (selbst gehostet via Docker Compose) – Auth, PostgreSQL, Storage
-- **API**: Hono.js (Node.js) – ersetzt Supabase Edge Functions
-- **Charts**: Recharts
+- **Frontend**: Next.js 16 + App Router, React 19, TypeScript, Tailwind CSS v4, TailAdmin, shadcn/ui
+- **Auth**: Supabase SSR + Server Components + Next.js Middleware
+- **API**: Next.js API Routes (`src/app/api/`)
+- **Backend**: Supabase (selbst gehostet via Docker Compose) – Auth, PostgreSQL 15, Storage
 - **PDF**: jsPDF + AutoTable
+- **Deployment**: Docker Compose + Nginx (Ubuntu 22.04+)
 
 ## Schnellstart Lokal
 
 ```bash
 git clone git@github.com:josefhaider/masitcon-tools-ameise.git
 cd masitcon-tools-ameise
-bash scripts/deploy.sh --local
+npm run setup
+npm run dev
 ```
 
-Die App laeuft auf http://localhost:8080. Der Hono-API-Container ist via Kong erreichbar unter http://localhost:8100/functions/v1.
+Die App laeuft auf http://localhost:3000.
 
 ## Architektur
 
-### Lokal (Mac)
-```
-npm run dev  (Port 8080, HMR)
-  ↓ VITE_SUPABASE_URL = http://localhost:8100
+### Lokal (Entwicklung)
 
-localhost:8100 → Kong → { auth, rest, storage, /functions/v1/* → api:3200 }
+```
+npm run dev  (Port 3000, HMR)
+  ↓ NEXT_PUBLIC_SUPABASE_URL = http://localhost:8100
+
+localhost:8100 → Kong → { auth, rest, storage }
 localhost:3101 → Supabase Studio
 localhost:9000 → Inbucket (E-Mail-Catch)
 localhost:5433 → PostgreSQL direkt
 ```
 
 ### Server (Production/Staging)
+
 ```
-DOMAIN       → Caddy → App-Container (Port 8080)
-DOMAIN/supabase/* → Caddy → Kong → { auth, rest, storage, /functions/v1/* → api:3200 }
+DOMAIN       → Nginx → Next.js App-Container (Port 3000)
+DOMAIN/supabase/* → Nginx → Kong → { auth, rest, storage }
+```
+
+## Lokale URLs
+
+| Service           | URL                              |
+|-------------------|----------------------------------|
+| App               | http://localhost:3000            |
+| Supabase API      | http://localhost:8100            |
+| Studio            | http://localhost:3101            |
+| Inbucket (E-Mail) | http://localhost:9000            |
+| PostgreSQL        | localhost:5433                   |
+
+## Haeufigste Befehle
+
+```bash
+# Ersteinrichtung (einmalig)
+npm run setup
+
+# Supabase-Stack starten
+npm run db:start
+
+# Next.js Dev-Server starten (separates Terminal)
+npm run dev
+
+# TypeScript-Typen nach Schema-Aenderung generieren
+npm run db:types
+
+# Migration anwenden
+npm run db:apply
+
+# Supabase-Stack stoppen (Daten bleiben erhalten)
+npm run db:stop
+
+# DB komplett zuruecksetzen (alle Daten weg!)
+npm run db:reset
+
+# Backup erstellen / wiederherstellen
+npm run db:backup
+npm run db:restore
+
+# Produktion Build
+npm run build
 ```
 
 ## Repo-Zugriff (Git + SSH-Key)
@@ -53,58 +99,10 @@ DOMAIN/supabase/* → Caddy → Kong → { auth, rest, storage, /functions/v1/* 
 
 ### Server-Deployment (Deploy-Key, read-only)
 
-1. `server-init.sh` generiert und registriert einen Deploy-Key automatisch.
-2. Oder manuell:
-   ```bash
-   ssh-keygen -t ed25519 -C "deploy@server" -f ~/.ssh/id_ed25519_deploy -N ""
-   cat ~/.ssh/id_ed25519_deploy.pub  # in GitHub Repo → Settings → Deploy keys eintragen
-   ```
-
-## Lokale Entwicklung
-
-### Start
-
+Manuell:
 ```bash
-bash scripts/deploy.sh --local
-```
-
-Beim ersten Start:
-- Generiert kryptografische Schluessel in `docker/.env.local`
-- Startet den kompletten Supabase-Stack + Hono-API-Container via Docker Compose
-- Wendet alle Migrationen aus `supabase/migrations/` automatisch an
-- Schreibt `.env` fuer Vite (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)
-- Startet `npm run dev`
-
-### Lokale URLs
-
-| Service           | URL                              |
-|-------------------|----------------------------------|
-| App               | http://localhost:8080            |
-| Supabase API      | http://localhost:8100            |
-| Hono API          | http://localhost:8100/functions/v1 |
-| Studio            | http://localhost:3101            |
-| Inbucket (E-Mail) | http://localhost:9000            |
-| PostgreSQL        | localhost:5433                   |
-
-### Stack-Verwaltung
-
-```bash
-# Stack stoppen
-docker compose -f docker/docker-compose.local.yml down
-
-# Daten komplett loeschen und neu starten (alle Migrationen neu anwenden)
-docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local down -v
-docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local up -d
-
-# Logs ansehen
-docker compose -f docker/docker-compose.local.yml logs -f
-docker compose -f docker/docker-compose.local.yml logs -f api
-```
-
-### Datenmigration von Supabase Cloud
-
-```bash
-bash scripts/migrate-from-cloud.sh
+ssh-keygen -t ed25519 -C "deploy@server" -f ~/.ssh/id_ed25519_deploy -N ""
+cat ~/.ssh/id_ed25519_deploy.pub  # in GitHub Repo → Settings → Deploy keys eintragen
 ```
 
 ## Deploy & Server
@@ -113,80 +111,95 @@ bash scripts/migrate-from-cloud.sh
 
 | Befehl | Beschreibung |
 |--------|--------------|
-| `bash scripts/deploy.sh --local` | Lokale Dev-Env einrichten und starten |
-| `bash scripts/deploy.sh` | Interaktives Server-Setup (Ersteinrichtung) |
-| `bash scripts/deploy.sh --update --env production` | Produktions-Update (git pull + rebuild) |
-| `bash scripts/deploy.sh --update --env staging` | Staging-Update |
-| `bash scripts/deploy.sh --status` | Container-Status anzeigen |
-| `bash scripts/deploy.sh --logs` | Container-Logs (live) |
-| `bash scripts/deploy.sh --stop` | Container stoppen |
-| `bash scripts/deploy.sh --restart` | Container neu starten |
-| `bash scripts/deploy.sh --clean` | Container + Volumes entfernen |
-| `bash scripts/deploy.sh --clean --full` | Alles inkl. Verzeichnisse entfernen |
-| `bash scripts/deploy.sh --backup` | DB-Dump erstellen |
-| `bash scripts/deploy.sh --migrate` | Migrations-Info anzeigen |
-| `bash scripts/deploy.sh --check-ports` | Lokale Ports pruefen |
-| `bash scripts/server-init.sh` | Frischen Ubuntu Server 22.04+ einrichten |
+| `npm run setup` | Lokale Dev-Env einrichten (einmalig) |
+| `npm run dev` | Next.js Dev-Server starten |
+| `npm run db:start` | Supabase-Stack starten |
+| `npm run db:stop` | Supabase-Stack stoppen |
+| `npm run db:reset` | DB zuruecksetzen + Migrationen neu anwenden |
+| `npm run db:types` | TypeScript-Typen aus DB generieren |
+| `npm run db:apply` | Neue Migrationen anwenden |
+| `npm run db:backup` | DB-Backup erstellen |
+| `npm run db:restore` | DB-Backup wiederherstellen |
+| `bash scripts/server-setup.sh` | Interaktives Server-Setup (Ersteinrichtung) |
+| `bash scripts/server-setup.sh --update` | Produktions-Update (git pull + rebuild) |
+| `bash scripts/server-setup.sh --status` | Status anzeigen |
+| `bash scripts/server-setup.sh --doctor` | Diagnose (nur lesen) |
+| `bash scripts/server-setup.sh --repair` | Bekannte Probleme beheben |
+| `bash scripts/server-setup.sh --backup` | DB-Backup erstellen |
+| `bash scripts/server-setup.sh --reconfigure` | Konfiguration aendern |
+| `bash scripts/server-setup.sh --harden` | Firewall haerten (ufw) |
+| `bash scripts/server-setup.sh --uninstall` | Deinstallieren |
 
 ### Server-Deployment Flow
 
-1. **Server vorbereiten** (einmalig auf frischem Ubuntu 22.04+):
+1. **Server vorbereiten und App deployen** (einmalig auf frischem Ubuntu 22.04+):
    ```bash
-   scp scripts/server-init.sh user@server:~/
-   ssh user@server "bash ~/server-init.sh"
+   bash scripts/server-setup.sh
    ```
-   Installiert Docker, Node.js, Firewall, fail2ban, Caddy, klont das Repo.
+   Der interaktive Wizard fragt nach Domain, Ports, SMTP-Daten etc., generiert Secrets,
+   klont das Repo, baut alle Container und startet den Stack.
 
-2. **App deployen:**
+2. **Nginx aktivieren** (manuell nach Setup):
    ```bash
-   bash /opt/projects/masitcon-tools-ameise/repo/scripts/deploy.sh
-   ```
-   Fragt interaktiv nach Domain, Supabase-Credentials, baut alle Container (App + Supabase + Hono API), startet den Stack.
-
-3. **Updates einspielen:**
-   ```bash
-   bash scripts/deploy.sh --update --env production
+   sudo cp /opt/ameise-production/nginx-ameise-production.conf /etc/nginx/sites-available/ameise-production.conf
+   sudo ln -sf /etc/nginx/sites-available/ameise-production.conf /etc/nginx/sites-enabled/
+   sudo nginx -t && sudo systemctl reload nginx
    ```
 
-### Caddy-Routing (Server)
+3. **SSL-Zertifikat** (optional, fuer HTTPS):
+   ```bash
+   sudo apt install certbot python3-certbot-nginx
+   sudo certbot --nginx -d zeiterfassung.masitcon.de
+   ```
 
-Der Stack laeuft komplett hinter Caddy:
-- `DOMAIN` → App (statische Vite-SPA)
-- `DOMAIN/supabase/*` → Kong (Supabase API-Gateway, inkl. `/functions/v1/*` → Hono API)
+4. **Updates einspielen:**
+   ```bash
+   bash scripts/server-setup.sh --update
+   ```
+
+### Nginx-Routing (Server)
+
+Der Stack laeuft komplett hinter Nginx:
+- `DOMAIN` → Next.js App (inkl. API Routes)
+- `DOMAIN/supabase/*` → Kong (Supabase API-Gateway)
 
 ## Projektstruktur
 
 ```
-api/
-  src/index.ts    # Hono.js API (3 Routes: create-employee, admin-update-user, employee-data-transfer)
-  Dockerfile      # Node.js 20 Alpine
-  package.json
 src/
-  components/     # React-Komponenten
-  hooks/          # Custom React Hooks
-  integrations/   # Supabase Client + Types
-  lib/            # Utilities (Berechnungen, PDF, Audit)
-  pages/          # Seiten (Dashboard, Auth, NotFound)
+  app/              # Next.js App Router (Seiten, Layouts, API Routes)
+  components/       # React-Komponenten
+  hooks/            # Custom React Hooks
+  integrations/     # Supabase Client + generierte Types
+  lib/              # Utilities (Auth, Berechnungen, PDF, Audit)
 docker/
-  docker-compose.yml        # Produktions-Stack (App + Supabase + Hono API)
-  docker-compose.local.yml  # Lokaler Dev-Stack (Supabase + Hono API, App via npm run dev)
+  docker-compose.yml        # Produktions-Stack (App + Supabase)
+  docker-compose.local.yml  # Lokaler Dev-Stack (Supabase only)
   volumes/api/kong.yml      # Kong API-Gateway Konfiguration
+  volumes/db/               # DB-Init-Scripts (Rollen, JWT, Migrationen)
   .env.local.example        # Template fuer lokale Umgebungsvariablen
+  .env.example              # Template fuer Produktions-Umgebungsvariablen
 supabase/
-  functions/      # Originale Deno Edge Functions (Referenz, nicht mehr aktiv)
-  migrations/     # SQL-Migrationen (automatisch beim Stack-Start angewendet)
+  migrations/       # SQL-Migrationen (automatisch beim Stack-Start angewendet)
 scripts/
-  deploy.sh         # Deploy & Setup Script
-  server-init.sh    # Server-Initialisierung
-  Dockerfile        # Multi-Stage Docker Build (App)
-  caddy-snippet.conf # Caddy Reverse Proxy Template
+  server-setup.sh   # Server-Setup & Deployment (alle Modi)
+  dev-setup.sh      # Lokale Ersteinrichtung (npm run setup)
+  generate-keys.sh  # Kryptografische Schluessel generieren
+  db-start.sh       # Supabase-Stack starten
+  db-stop.sh        # Supabase-Stack stoppen
+  db-reset.sh       # DB zuruecksetzen
+  db-types.sh       # TypeScript-Typen generieren
+  db-backup.sh      # Backup & Restore
+  apply-migration.sh # Migrationen anwenden
+Dockerfile          # Multi-Stage Docker Build (Next.js standalone)
 ```
 
 ## npm Scripts
 
 | Script | Beschreibung |
 |--------|--------------|
-| `npm run dev` | Dev-Server starten |
-| `npm run build` | Produktions-Build |
+| `npm run dev` | Next.js Dev-Server starten |
+| `npm run build` | Produktions-Build (standalone) |
+| `npm run start` | Produktions-Server starten |
 | `npm run lint` | ESLint ausfuehren |
-| `npm run preview` | Build-Preview |
+| `npm run format` | Prettier ausfuehren |

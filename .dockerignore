@@ -1,11 +1,17 @@
 node_modules
 dist
+.next
 .env
 .env.local
+.env.production
+.env.staging
 .git
 .cursor
 .claude_reference
 *.log
+docker/
+Backup/
+migration-dumps/
 supabase/.temp
 supabase/.branches
 supabase/.env

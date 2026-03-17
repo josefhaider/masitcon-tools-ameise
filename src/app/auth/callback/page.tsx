@@ -43,7 +43,7 @@ export default function AuthCallbackPage() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
+    } = supabase.auth.onAuthStateChange((event: "INITIAL_SESSION" | "SIGNED_IN" | "SIGNED_OUT" | "TOKEN_REFRESHED" | "USER_UPDATED" | "PASSWORD_RECOVERY" | "MFA_CHALLENGE_VERIFIED") => {
       if (event === "PASSWORD_RECOVERY") {
         router.replace("/auth/new-password");
       } else if (event === "SIGNED_IN" || event === "USER_UPDATED") {

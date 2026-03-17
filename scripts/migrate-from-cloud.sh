@@ -4,7 +4,7 @@
 # ===================================================================
 # Einmaliger Import von Supabase Cloud in die lokale Docker-Umgebung.
 #
-# Voraussetzung: bash scripts/deploy.sh --local (Stack muss laufen)
+# Voraussetzung: npm run setup (Stack muss laufen)
 #
 # Ausführen:
 #   bash scripts/migrate-from-cloud.sh
@@ -128,7 +128,7 @@ check_prerequisites() {
     # docker/.env.local vorhanden
     if [ ! -f "$LOCAL_ENV_FILE" ]; then
         err "docker/.env.local nicht gefunden"
-        info "Zuerst ausführen: bash scripts/deploy.sh --local"
+        info "Zuerst ausführen: npm run setup"
         exit 1
     fi
     log "docker/.env.local vorhanden"
@@ -137,7 +137,7 @@ check_prerequisites() {
     local db_container="${LOCAL_COMPOSE_PROJECT}-db"
     if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${db_container}$"; then
         err "Lokaler Stack läuft nicht (Container '${db_container}' nicht gefunden)"
-        info "Zuerst ausführen: bash scripts/deploy.sh --local"
+        info "Zuerst ausführen: npm run db:start"
         exit 1
     fi
     log "Lokaler Stack läuft (${db_container})"

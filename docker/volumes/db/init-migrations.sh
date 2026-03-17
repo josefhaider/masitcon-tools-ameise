@@ -4,7 +4,7 @@
 # ===================================================================
 # Wird als Teil von docker-entrypoint-initdb.d ausgefuehrt.
 # Laeuft NUR beim ersten Start (wenn das Data-Volume leer ist).
-# Fuer spaetere Updates: bash scripts/deploy.sh --migrate
+# Fuer spaetere Updates: bash scripts/server-setup.sh --update  oder  npm run db:apply
 # ===================================================================
 
 set -e
