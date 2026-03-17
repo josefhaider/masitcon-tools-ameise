@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -28,7 +30,7 @@ import { toast } from 'sonner';
 import { Check, X, Pencil, Trash2, Plane, Clock, Ban, GraduationCap, Filter, ChevronDown, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/contexts/profile-context';
 import { logAudit } from '@/lib/auditLog';
 import { Database } from '@/integrations/supabase/types';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -90,7 +92,7 @@ const getTypeBadge = (type: AbsenceType) => {
 };
 
 const VacationApprovalManager = () => {
-  const { user } = useAuth();
+  const { userId } = useProfile();
   const [requests, setRequests] = useState<VacationRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
@@ -218,7 +220,7 @@ const VacationApprovalManager = () => {
         .from('absences')
         .update({
           status: 'approved',
-          approved_by: user!.id,
+          approved_by: userId,
           approved_at: new Date().toISOString(),
         })
         .eq('id', request.id);
@@ -264,7 +266,7 @@ const VacationApprovalManager = () => {
         .update({
           status: 'rejected',
           rejection_reason: rejectionReason,
-          approved_by: user!.id,
+          approved_by: userId,
           approved_at: new Date().toISOString(),
         })
         .eq('id', selectedRequest.id);
@@ -312,7 +314,7 @@ const VacationApprovalManager = () => {
 
       // Wenn Status auf approved geändert wird
       if (editingRequest.status === 'approved') {
-        updateData.approved_by = user!.id;
+        updateData.approved_by = userId;
         updateData.approved_at = new Date().toISOString();
         updateData.rejection_reason = null;
       }
@@ -320,7 +322,7 @@ const VacationApprovalManager = () => {
       // Wenn Status auf rejected geändert wird
       if (editingRequest.status === 'rejected') {
         updateData.rejection_reason = editingRequest.rejection_reason;
-        updateData.approved_by = user!.id;
+        updateData.approved_by = userId;
         updateData.approved_at = new Date().toISOString();
       }
 

@@ -1,6 +1,8 @@
+"use client";
+
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/contexts/profile-context';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -23,7 +25,7 @@ interface MonthlyHoursReportProps {
 }
 
 export default function MonthlyHoursReport({ isAdmin = false }: MonthlyHoursReportProps) {
-  const { user } = useAuth();
+  const { userId } = useProfile();
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -51,10 +53,10 @@ export default function MonthlyHoursReport({ isAdmin = false }: MonthlyHoursRepo
   useEffect(() => {
     if (isAdmin) {
       loadEmployees();
-    } else if (user) {
-      setSelectedEmployee(user.id);
+    } else if (userId) {
+      setSelectedEmployee(userId);
     }
-  }, [isAdmin, user]);
+  }, [isAdmin, userId]);
 
   const loadEmployees = async () => {
     try {

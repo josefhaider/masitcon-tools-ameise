@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -28,8 +30,10 @@ interface SchoolHoliday {
   name: string;
   start_date: string;
   end_date: string;
-  federal_state: string;
+  federal_state: string | null;
   school_year: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export default function SchoolHolidayManager() {

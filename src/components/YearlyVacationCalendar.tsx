@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -28,7 +30,7 @@ type ViewMode = "year" | "quarter" | "month";
 interface Team {
   id: string;
   name: string;
-  color: string;
+  color: string | null;
 }
 
 interface Absence {
@@ -1188,7 +1190,7 @@ export default function YearlyVacationCalendar() {
                         <div className="flex items-center gap-2">
                           <div
                             className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: team.color }}
+                            style={{ backgroundColor: team.color ?? undefined }}
                           />
                           {team.name}
                         </div>

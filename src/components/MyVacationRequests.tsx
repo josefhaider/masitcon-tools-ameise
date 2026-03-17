@@ -1,5 +1,7 @@
+"use client";
+
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/contexts/profile-context';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,7 +34,7 @@ interface VacationRequest {
 }
 
 const MyVacationRequests = () => {
-  const { user } = useAuth();
+  const { userId } = useProfile();
   const [requests, setRequests] = useState<VacationRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [workDaysMap, setWorkDaysMap] = useState<Map<string, number>>(new Map());
@@ -41,7 +43,7 @@ const MyVacationRequests = () => {
 
   useEffect(() => {
     loadRequests();
-  }, [user]);
+  }, [userId]);
 
   // Berechne Arbeitstage für alle Requests
   useEffect(() => {
@@ -75,7 +77,7 @@ const MyVacationRequests = () => {
   }, [requests]);
 
   const loadRequests = async () => {
-    if (!user) return;
+    if (!userId) return;
 
     try {
       const { data, error } = await supabase
@@ -84,7 +86,7 @@ const MyVacationRequests = () => {
           *,
           profiles:profiles!absences_approved_by_fkey (full_name)
         `)
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .in('type', ['vacation', 'unpaid_leave', 'comp_time'])
         .order('start_date', { ascending: false });
 

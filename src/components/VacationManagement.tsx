@@ -1,3 +1,5 @@
+"use client";
+
 import { useState } from 'react';
 import VacationRequestForm from './VacationRequestForm';
 import MyVacationRequests from './MyVacationRequests';

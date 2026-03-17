@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -152,7 +154,7 @@ const DataTransferManager = () => {
       }
 
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/employee-data-transfer`,
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/employee-data-transfer`,
         {
           method: "POST",
           headers: {
@@ -249,7 +251,7 @@ const DataTransferManager = () => {
       }
 
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/employee-data-transfer`,
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/employee-data-transfer`,
         {
           method: "POST",
           headers: {

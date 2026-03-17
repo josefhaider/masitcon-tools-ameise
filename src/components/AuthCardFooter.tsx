@@ -1,3 +1,5 @@
+"use client";
+
 // Platzhalter für das Muzzitcon-Dug Logo.
 // Sobald das finale Dug-Asset verfügbar ist, einfach den img-src austauschen.
 export function AuthCardFooter() {

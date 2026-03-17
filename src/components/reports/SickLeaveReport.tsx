@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -19,11 +21,12 @@ interface SickLeave {
   user_id: string;
   start_date: string;
   end_date: string;
-  medical_certificate_status: string;
+  medical_certificate_status: string | null;
   profile?: {
     full_name: string;
     employee_number: string | null;
   };
+  [key: string]: unknown;
 }
 
 export default function SickLeaveReport() {

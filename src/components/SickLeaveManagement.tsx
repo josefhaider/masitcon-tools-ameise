@@ -1,3 +1,5 @@
+"use client";
+
 import { useState } from 'react';
 import SickLeaveForm from './SickLeaveForm';
 import MySickLeaves from './MySickLeaves';

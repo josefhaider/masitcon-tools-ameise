@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,8 +39,8 @@ interface Profile {
   id: string;
   full_name: string;
   employee_number: string | null;
-  time_tracking_exempt: boolean;
-  is_archived?: boolean;
+  time_tracking_exempt: boolean | null;
+  is_archived: boolean | null;
 }
 
 interface WorkSchedule {
@@ -62,7 +64,7 @@ interface Team {
   id: string;
   name: string;
   description: string | null;
-  color: string;
+  color: string | null;
   member_count?: number;
 }
 
@@ -82,8 +84,8 @@ interface EmployeeOverview {
   daily_end: string | null;
   break_minutes: number | null;
   schedule_type: 'einheitlich' | 'variabel' | 'nicht hinterlegt';
-  time_tracking_exempt: boolean;
-  is_archived: boolean;
+  time_tracking_exempt: boolean | null;
+  is_archived: boolean | null;
 }
 
 interface UserRole {
@@ -1334,7 +1336,7 @@ const EmployeeManager = () => {
                               <div className="flex items-center gap-2">
                                 <div
                                   className="w-3 h-3 rounded-full"
-                                  style={{ backgroundColor: team.color }}
+                                  style={{ backgroundColor: team.color ?? undefined }}
                                 />
                                 {team.name}
                               </div>

@@ -1,5 +1,7 @@
+"use client";
+
 import { useState, useEffect } from 'react';
-import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/contexts/profile-context';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
-import { User, Mail, Hash, Shield, Key, Save, Loader2, Clock } from 'lucide-react';
+import { User, Mail, Hash, Shield, Key, Save, Loader2, Clock, Eye, EyeOff } from 'lucide-react';
 import { calculateWeeklyHoursFromSchedule } from '@/lib/weeklyHoursCalculator';
 
 interface Profile {
@@ -33,23 +35,40 @@ const roleBadgeVariants: Record<string, 'default' | 'secondary' | 'destructive' 
   vacation_approver: 'default',
 };
 
+function getPasswordStrength(password: string): { score: number; label: string; color: string } {
+  if (!password) return { score: 0, label: '', color: '' };
+  let score = 0;
+  if (password.length >= 8) score++;
+  if (password.length >= 12) score++;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score++;
+  if (/\d/.test(password)) score++;
+  if (/[^a-zA-Z0-9]/.test(password)) score++;
+
+  if (score <= 1) return { score: 1, label: 'Schwach', color: 'bg-red-500' };
+  if (score <= 2) return { score: 2, label: 'Mäßig', color: 'bg-orange-500' };
+  if (score <= 3) return { score: 3, label: 'Gut', color: 'bg-yellow-500' };
+  if (score <= 4) return { score: 4, label: 'Stark', color: 'bg-green-500' };
+  return { score: 5, label: 'Sehr stark', color: 'bg-emerald-600' };
+}
+
 export function UserProfile() {
-  const { user } = useAuth();
+  const { userId } = useProfile();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [roles, setRoles] = useState<UserRole[]>([]);
   const [weeklyHours, setWeeklyHours] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   
-  // Form states
   const [fullName, setFullName] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
   useEffect(() => {
     const loadUserData = async () => {
-      if (!user) return;
+      if (!userId) return;
 
       setLoading(true);
       
@@ -57,7 +76,7 @@ export function UserProfile() {
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('id, email, full_name, employee_number')
-        .eq('id', user.id)
+        .eq('id', userId)
         .single();
       
       if (profileError) {
@@ -71,29 +90,29 @@ export function UserProfile() {
       const { data: rolesData } = await supabase
         .from('user_roles')
         .select('role')
-        .eq('user_id', user.id);
+        .eq('user_id', userId);
       
       setRoles((rolesData as UserRole[]) || []);
       
       // Calculate weekly hours from work schedule
-      const hours = await calculateWeeklyHoursFromSchedule(user.id);
+      const hours = await calculateWeeklyHoursFromSchedule(userId);
       setWeeklyHours(hours);
       
       setLoading(false);
     };
 
     loadUserData();
-  }, [user]);
+  }, [userId]);
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !fullName.trim()) return;
+    if (!userId || !fullName.trim()) return;
 
     setSaving(true);
     const { error } = await supabase
       .from('profiles')
       .update({ full_name: fullName.trim() })
-      .eq('id', user.id);
+      .eq('id', userId);
 
     if (error) {
       toast.error('Profil konnte nicht aktualisiert werden', {
@@ -114,8 +133,8 @@ export function UserProfile() {
       return;
     }
 
-    if (newPassword.length < 6) {
-      toast.error('Passwort muss mindestens 6 Zeichen haben');
+    if (newPassword.length < 8) {
+      toast.error('Passwort muss mindestens 8 Zeichen haben');
       return;
     }
 
@@ -271,7 +290,7 @@ export function UserProfile() {
       </Card>
 
       {/* Change Password */}
-      <Card>
+      <Card id="passwort">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Key className="h-5 w-5" />
@@ -286,33 +305,84 @@ export function UserProfile() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="newPassword">Neues Passwort</Label>
-                <Input
-                  id="newPassword"
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Mindestens 6 Zeichen"
-                  minLength={6}
-                  required
-                />
+                <div className="relative">
+                  <Input
+                    id="newPassword"
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Mindestens 8 Zeichen"
+                    minLength={8}
+                    required
+                    autoComplete="new-password"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 transition-colors hover:text-gray-600"
+                    tabIndex={-1}
+                    aria-label={showNewPassword ? 'Passwort verbergen' : 'Passwort anzeigen'}
+                  >
+                    {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {newPassword && (() => {
+                  const strength = getPasswordStrength(newPassword);
+                  return (
+                    <div className="space-y-1">
+                      <div className="flex h-1.5 gap-1">
+                        {[1, 2, 3, 4, 5].map((level) => (
+                          <div
+                            key={level}
+                            className={`h-full flex-1 rounded-full transition-colors ${
+                              level <= strength.score ? strength.color : 'bg-gray-200'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">{strength.label}</p>
+                    </div>
+                  );
+                })()}
               </div>
               
               <div className="space-y-2">
                 <Label htmlFor="confirmPassword">Passwort bestätigen</Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Passwort wiederholen"
-                  minLength={6}
-                  required
-                />
+                <div className="relative">
+                  <Input
+                    id="confirmPassword"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Passwort wiederholen"
+                    minLength={8}
+                    required
+                    autoComplete="new-password"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 transition-colors hover:text-gray-600"
+                    tabIndex={-1}
+                    aria-label={showConfirmPassword ? 'Passwort verbergen' : 'Passwort anzeigen'}
+                  >
+                    {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {confirmPassword && newPassword && confirmPassword !== newPassword && (
+                  <p className="text-xs text-red-500">Passwörter stimmen nicht überein</p>
+                )}
               </div>
             </div>
 
             <div className="flex justify-end">
-              <Button type="submit" variant="outline" disabled={changingPassword || !newPassword || !confirmPassword}>
+              <Button
+                type="submit"
+                variant="outline"
+                disabled={changingPassword || !newPassword || !confirmPassword || newPassword !== confirmPassword}
+              >
                 {changingPassword ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />

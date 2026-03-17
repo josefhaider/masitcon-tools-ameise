@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 
 export type AuditAction = 'INSERT' | 'UPDATE' | 'DELETE';
 
@@ -6,8 +7,8 @@ export interface AuditLogEntry {
   action: AuditAction;
   tableName: string;
   recordId?: string;
-  oldValues?: Record<string, unknown>;
-  newValues?: Record<string, unknown>;
+  oldValues?: Record<string, unknown> | object;
+  newValues?: Record<string, unknown> | object;
   description?: string;
 }
 
@@ -30,8 +31,8 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
       action: entry.action,
       table_name: entry.tableName,
       record_id: entry.recordId,
-      old_values: entry.oldValues || null,
-      new_values: entry.newValues || null,
+      old_values: (entry.oldValues as Json) || null,
+      new_values: (entry.newValues as Json) || null,
       description: entry.description || null,
     });
 

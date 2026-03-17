@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -34,7 +36,7 @@ interface BalanceCorrection {
   vacation_days_adjustment: number | null;
   reason: string;
   created_at: string;
-  creator?: { full_name: string };
+  creator?: { full_name: string } | null;
 }
 
 interface EmployeeBalances {

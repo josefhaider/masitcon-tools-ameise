@@ -1,0 +1,76 @@
+# ===================================================================
+# Ameise Zeiterfassung - Nginx Reverse Proxy Template (HTTPS)
+# ===================================================================
+# Placeholders (envsubst): HOSTNAME, APP_PORT, API_PORT
+#
+#   HOSTNAME   - z.B. zeiterfassung.masitcon.de
+#   APP_PORT   - z.B. 3000 (Next.js App in Docker)
+#   API_PORT   - z.B. 8000 (Kong API in Docker)
+#
+# Fuer HTTPS: Let's Encrypt Zertifikate unter /etc/letsencrypt/live/${HOSTNAME}/
+#
+# Generieren:
+#   export HOSTNAME=zeiterfassung.masitcon.de APP_PORT=3000 API_PORT=8000
+#   envsubst '${HOSTNAME} ${APP_PORT} ${API_PORT}' < docker/volumes/nginx-ameise.conf.template
+# ===================================================================
+
+# HTTP Server (Redirect auf HTTPS)
+server {
+    listen 80;
+    server_name ${HOSTNAME};
+
+    # ACME Challenge fuer Let's Encrypt (certbot)
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        allow all;
+    }
+
+    # Redirect auf HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTPS Server
+server {
+    listen 443 ssl http2;
+    server_name ${HOSTNAME};
+    client_max_body_size 200M;
+
+    # Let's Encrypt Zertifikate
+    ssl_certificate /etc/letsencrypt/live/${HOSTNAME}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${HOSTNAME}/privkey.pem;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+
+    # Next.js App
+    location / {
+        proxy_pass http://127.0.0.1:${APP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 86400;
+    }
+
+    # Supabase API (Kong)
+    location /supabase/ {
+        proxy_pass http://127.0.0.1:${API_PORT}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_read_timeout 86400;
+    }
+}

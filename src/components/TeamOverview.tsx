@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from 'react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isWeekend, isBefore, isAfter } from 'date-fns';
 import { de } from 'date-fns/locale';

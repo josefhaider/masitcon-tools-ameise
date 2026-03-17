@@ -4,19 +4,20 @@
 # Nur Supabase-Backend – App läuft via `npm run dev` (HMR).
 # Kein App-Container: schnellere Entwicklung durch Hot Module Reload.
 #
-# Start:   bash scripts/deploy.sh --local
+# Start:   npm run setup  (erstmalig)
 # Manuell: docker compose -f docker/docker-compose.local.yml --env-file docker/.env.local up -d
-# Stoppen: docker compose -f docker/docker-compose.local.yml down
-# Reset:   docker compose -f docker/docker-compose.local.yml down -v (Daten löschen!)
+# Stoppen: npm run db:stop
+# Reset:   npm run db:reset  (Daten löschen!)
 # Logs:    docker compose -f docker/docker-compose.local.yml logs -f
 #
 # Ports (alle 0.0.0.0 – Mac Docker Desktop):
-#   API (Kong):  8100  → http://localhost:8100
-#   PostgreSQL:  5433  → localhost:5433
-#   Studio:      3101  → http://localhost:3101
+#   API (Kong):   8100  → http://localhost:8100
+#   PostgreSQL:   5433  → localhost:5433
+#   Studio:       3101  → http://localhost:3101
+#   Inbucket:     9000  → http://localhost:9000
 #
 # Migrationen werden beim ersten Start automatisch angewendet.
-# Für Reset nach Migration-Änderungen: docker compose down -v && up -d
+# Für Reset nach Migration-Änderungen: npm run db:reset
 # ===================================================================
 
 services:
@@ -134,7 +135,7 @@ services:
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
 
-      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:8080}
+      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000}
       GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-}
       GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
 
@@ -148,11 +149,9 @@ services:
       GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: ${ENABLE_ANONYMOUS_USERS:-false}
       GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM:-false}
 
-      # SMTP – Standard: Inbucket (fängt E-Mails lokal ab, http://localhost:9000)
-      # Für echten Versand: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS in .env.local setzen.
       GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-admin@ameise.local}
-      GOTRUE_SMTP_HOST: ${SMTP_HOST}
-      GOTRUE_SMTP_PORT: ${SMTP_PORT:-465}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-inbucket}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-2500}
       GOTRUE_SMTP_USER: ${SMTP_USER:-}
       GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
       GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-Ameise Local}
@@ -256,25 +255,17 @@ services:
       NEXT_PUBLIC_ENABLE_LOGS: "false"
       NEXT_ANALYTICS_BACKEND_PROVIDER: postgres
 
-  # ── Hono API (Edge-Functions-Ersatz) ─────────────────────────────
-  # Ersetzt Supabase Edge Functions (Deno) durch einen Node.js/Hono-Container.
-  # Erreichbar intern via Kong: http://localhost:API_PORT/functions/v1/*
-  # Kein externer Port – nur über Kong (Port 8000 intern).
-  api:
-    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-api
-    build:
-      context: ../api
-      dockerfile: Dockerfile
+  # ── Inbucket (E-Mail-Catcher) ────────────────────────────────────
+  # Fängt alle E-Mails lokal ab (Invite, Recovery, Confirmation).
+  # Web-UI: http://localhost:9000
+  # SMTP: Port 2500 (intern, von GoTrue genutzt)
+  inbucket:
+    container_name: ${COMPOSE_PROJECT_NAME:-ameise-local}-inbucket
+    image: inbucket/inbucket:latest
     restart: unless-stopped
-    depends_on:
-      kong:
-        condition: service_started
-    environment:
-      SUPABASE_URL: http://kong:8000
-      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
-      DATA_TRANSFER_PASSWORD: ${DATA_TRANSFER_PASSWORD:-local-dev-password}
-      ALLOWED_ORIGIN: ${SITE_URL:-http://localhost:8080}
-
+    ports:
+      - "0.0.0.0:${INBUCKET_WEB_PORT:-9000}:9000"
+      - "0.0.0.0:${INBUCKET_SMTP_PORT:-2500}:2500"
 
 volumes:
   db-data:

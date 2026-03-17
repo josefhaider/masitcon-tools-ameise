@@ -1,3 +1,5 @@
+"use client";
+
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Card } from '@/components/ui/card';
@@ -34,7 +36,7 @@ interface TimeEntry {
   start_time: string;
   end_time: string;
   break_minutes: number;
-  notes?: string;
+  notes?: string | null;
 }
 
 interface DayInfo {

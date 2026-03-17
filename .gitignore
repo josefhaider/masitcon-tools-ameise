@@ -5,6 +5,8 @@ node_modules
 .env.production
 .env.staging
 dist
+.next/
+out/
 .cursor/
 supabase/.temp/
 supabase/.branches/
@@ -19,3 +21,4 @@ import_vinzenz_krautz_2025.sql
 docker/.env.local
 migration-dumps/
 bun.lockb
+next-env.d.ts

@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useState } from 'react';
 import { format, isAfter, isBefore, startOfDay } from 'date-fns';
 import { de } from 'date-fns/locale';

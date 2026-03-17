@@ -1,3 +1,5 @@
+"use client";
+
 import { Card } from '@/components/ui/card';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay } from 'date-fns';
 import { de } from 'date-fns/locale';

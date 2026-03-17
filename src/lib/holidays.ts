@@ -5,8 +5,10 @@ export interface Holiday {
   id: string;
   date: string;
   name: string;
-  federal_state: string;
-  is_recurring: boolean;
+  federal_state: string | null;
+  is_recurring: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface SchoolHoliday {
@@ -14,7 +16,7 @@ export interface SchoolHoliday {
   name: string;
   start_date: string;
   end_date: string;
-  federal_state: string;
+  federal_state: string | null;
   school_year: string | null;
 }
 

@@ -4,13 +4,13 @@
 # App + Supabase-Backend in einem Stack.
 # Isolation via COMPOSE_PROJECT_NAME (z.B. ameise-production).
 #
-# Start:   COMPOSE_PROJECT_NAME=ameise-production docker compose -f docker/docker-compose.yml up -d
+# Start:   docker compose -f docker/docker-compose.yml --env-file docker/.env up -d
 # Stoppen: docker compose -f docker/docker-compose.yml down
 # Logs:    docker compose -f docker/docker-compose.yml logs -f app
 # Rebuild: docker compose -f docker/docker-compose.yml up -d --build app
 #
 # Alle Ports binden an 127.0.0.1 – kein direkter Internetzugriff.
-# Caddy routet: DOMAIN → App (APP_PORT), DOMAIN/supabase/* → Kong (API_PORT)
+# Nginx/Caddy routet: DOMAIN → App (APP_PORT), DOMAIN/supabase/* → Kong (API_PORT)
 # ===================================================================
 
 services:
@@ -57,7 +57,7 @@ services:
 
   # ── Kong API Gateway ──────────────────────────────────────────────
   # Einziger Supabase-Service mit externem Port (127.0.0.1-only).
-  # Caddy routet /supabase/* → Kong (nach Strip des /supabase-Präfixes).
+  # Nginx/Caddy routet /supabase/* → Kong (nach Strip des /supabase-Präfixes).
   kong:
     container_name: ${COMPOSE_PROJECT_NAME}-kong
     image: kong:2.8.1
@@ -247,41 +247,29 @@ services:
       NEXT_PUBLIC_ENABLE_LOGS: "false"
       NEXT_ANALYTICS_BACKEND_PROVIDER: postgres
 
-  # ── Hono API (Edge-Functions-Ersatz) ─────────────────────────────
-  # Kein externer Port – nur über Kong erreichbar: DOMAIN/functions/v1/*
-  api:
-    container_name: ${COMPOSE_PROJECT_NAME}-api
-    build:
-      context: ..
-      dockerfile: api/Dockerfile
-    restart: unless-stopped
-    depends_on:
-      kong:
-        condition: service_started
-    environment:
-      SUPABASE_URL: http://kong:8000
-      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
-      DATA_TRANSFER_PASSWORD: ${DATA_TRANSFER_PASSWORD}
-      ALLOWED_ORIGIN: ${SITE_URL}
-
-  # ── Vite App (SPA, statische Dateien via serve) ──────────────────
-  # WICHTIG: VITE_SUPABASE_URL wird zur BUILD-ZEIT eingebettet.
-  # Caddy routet: DOMAIN → 127.0.0.1:APP_PORT
-  # network_mode: host → direkter Zugriff auf 127.0.0.1:API_PORT (Kong)
+  # ── Next.js App ──────────────────────────────────────────────────
+  # Next.js 16 Standalone Build, serviert via Node.js auf Port 3000.
+  # NEXT_PUBLIC_* werden zur BUILD-ZEIT eingebettet (Browser-Bundle).
+  # Server-seitige Env-Vars (SUPABASE_SERVICE_ROLE_KEY etc.) zur Laufzeit.
   app:
     container_name: ${COMPOSE_PROJECT_NAME}-app
     build:
       context: ..
-      dockerfile: scripts/Dockerfile
+      dockerfile: Dockerfile
       args:
-        BUILD_MODE: ${BUILD_MODE:-production}
-        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
-        VITE_SUPABASE_ANON_KEY: ${ANON_KEY}
-    network_mode: host
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
     environment:
-      PORT: ${APP_PORT:-8080}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      DATA_TRANSFER_PASSWORD: ${DATA_TRANSFER_PASSWORD}
     restart: unless-stopped
     depends_on:
+      db:
+        condition: service_healthy
       kong:
         condition: service_started
 

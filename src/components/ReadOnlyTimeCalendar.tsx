@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card } from '@/components/ui/card';
@@ -15,7 +17,7 @@ interface TimeEntry {
   start_time: string;
   end_time: string;
   break_minutes: number;
-  notes?: string;
+  notes?: string | null;
 }
 
 interface Absence {

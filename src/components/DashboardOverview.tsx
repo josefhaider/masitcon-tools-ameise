@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,7 +11,7 @@ import { YearlyOverview } from './YearlyOverview';
 import { TodayTimeCard } from './TodayTimeCard';
 import { calculateMonthlyHours, calculateMultipleMonths, getBalanceCorrections, getVacationCorrectionsByYear, calculateYtdBalance } from '@/lib/targetHoursCalculator';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/contexts/profile-context';
 import { Clock, CheckCircle, Scale, Plane, AlertCircle, ChevronLeft, ChevronRight, Palmtree, TrendingUp, Thermometer, Settings } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -49,8 +51,8 @@ interface VacationBalance {
 }
 
 export const DashboardOverview = ({ userId: propUserId, isAdminView = false, onNavigate }: DashboardOverviewProps) => {
-  const { user } = useAuth();
-  const userId = propUserId || user?.id || '';
+  const { userId: profileUserId } = useProfile();
+  const userId = propUserId || profileUserId;
   const [currentMonthData, setCurrentMonthData] = useState({
     targetHours: 0,
     actualHours: 0,

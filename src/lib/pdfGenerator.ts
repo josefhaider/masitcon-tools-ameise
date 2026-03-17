@@ -18,7 +18,7 @@ export interface SickLeaveReportEntry {
   startDate: string;
   endDate: string;
   workDays: number;
-  certificateStatus: string;
+  certificateStatus: string | null;
 }
 
 export interface TimeEntryReportData {

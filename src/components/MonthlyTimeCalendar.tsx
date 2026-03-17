@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+"use client";
+
+import { Fragment, useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -22,7 +24,11 @@ interface TimeEntry {
   start_time: string;
   end_time: string;
   break_minutes: number;
-  notes?: string;
+  notes?: string | null;
+  template_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  user_id?: string;
 }
 
 interface Absence {
@@ -693,9 +699,8 @@ const MonthlyTimeCalendar = ({ userId }: MonthlyTimeCalendarProps) => {
               const isExpanded = expandedDays.has(dateStr);
 
               return (
-                <>
+                <Fragment key={day.toISOString()}>
                   <TableRow
-                    key={day.toISOString()}
                     id={`time-row-${dateStr}`}
                     className={`
                       transition-all duration-300
@@ -1333,7 +1338,7 @@ const MonthlyTimeCalendar = ({ userId }: MonthlyTimeCalendarProps) => {
                       );
                     })
                   )}
-                </>
+                </Fragment>
               );
             })}
           </TableBody>

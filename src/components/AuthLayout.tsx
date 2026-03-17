@@ -1,3 +1,5 @@
+"use client";
+
 interface AuthLayoutProps {
   children: React.ReactNode;
 }

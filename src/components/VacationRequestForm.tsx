@@ -1,5 +1,7 @@
+"use client";
+
 import { useState, useEffect } from 'react';
-import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/contexts/profile-context';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,7 +29,7 @@ interface VacationRequestFormProps {
 }
 
 const VacationRequestForm = ({ onSubmitSuccess }: VacationRequestFormProps) => {
-  const { user } = useAuth();
+  const { userId } = useProfile();
   const isMobile = useIsMobile();
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
@@ -70,10 +72,10 @@ const getVacationTypeLabel = (type: AbsenceType): string => {
   // Berechne Arbeitstage wenn Start- und Enddatum gesetzt sind
   useEffect(() => {
     const calculateDays = async () => {
-      if (startDate && endDate && user) {
+      if (startDate && endDate && userId) {
         setCalculatingDays(true);
         try {
-          const days = await calculateWorkDays(startDate, endDate, user.id);
+          const days = await calculateWorkDays(startDate, endDate, userId);
           setCalculatedDays(days);
         } catch (error) {
           console.error('Error calculating work days:', error);
@@ -86,7 +88,7 @@ const getVacationTypeLabel = (type: AbsenceType): string => {
       }
     };
     calculateDays();
-  }, [startDate, endDate, user]);
+  }, [startDate, endDate, userId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,7 +120,7 @@ const getVacationTypeLabel = (type: AbsenceType): string => {
       const displayDays = isHalfDay ? 0.5 : (calculatedDays || 1);
       
       const { data: newRequest, error } = await supabase.from('absences').insert({
-        user_id: user!.id,
+        user_id: userId,
         type: vacationType,
         start_date: startDateStr,
         end_date: endDateStr,

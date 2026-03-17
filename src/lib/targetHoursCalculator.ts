@@ -17,7 +17,7 @@ interface Absence {
   start_date: string;
   end_date: string;
   type: string;
-  is_half_day?: boolean;
+  is_half_day?: boolean | null;
 }
 
 export interface MonthlyHoursData {

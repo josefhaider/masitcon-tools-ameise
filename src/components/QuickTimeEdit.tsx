@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -17,7 +19,7 @@ interface QuickTimeEditProps {
     start_time: string;
     end_time: string;
     break_minutes: number;
-    notes?: string;
+    notes?: string | null;
   };
   suggestedData?: {
     start_time: string;

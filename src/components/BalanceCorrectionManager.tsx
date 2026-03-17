@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -35,7 +37,7 @@ interface BalanceCorrection {
   created_by: string;
   created_at: string;
   applies_to_year: number | null;
-  creator?: { full_name: string };
+  creator?: { full_name: string } | null;
 }
 
 interface EmployeeBalances {

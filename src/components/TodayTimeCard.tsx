@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from 'react';
 import { format, getDay } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -40,7 +42,7 @@ interface TimeEntry {
   start_time: string;
   end_time: string;
   break_minutes: number;
-  notes?: string;
+  notes?: string | null;
 }
 
 interface TodayTimeCardProps {

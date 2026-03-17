@@ -1,3 +1,5 @@
+"use client";
+
 import { useState } from 'react';
 import { format, isBefore } from 'date-fns';
 import { de } from 'date-fns/locale';

@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,8 +24,17 @@ interface SickLeave {
   start_date: string;
   end_date: string;
   notes: string | null;
-  medical_certificate_status: string;
+  medical_certificate_status: string | null;
+  medical_certificate_path?: string | null;
   created_at: string;
+  created_by?: string | null;
+  approved_at?: string | null;
+  approved_by?: string | null;
+  status?: string | null;
+  type?: string;
+  is_half_day?: boolean | null;
+  half_day_type?: string | null;
+  updated_at?: string | null;
   profile?: {
     full_name: string;
     employee_number: string | null;
@@ -192,7 +203,7 @@ export default function SickLeaveAdminManager() {
   const getWorkDays = (sickLeaveId: string): number => workDaysMap.get(sickLeaveId) ?? 0;
   const getTotalWorkDays = (): number => sickLeaves.reduce((total, sl) => total + (workDaysMap.get(sl.id) ?? 0), 0);
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string | null) => {
     switch (status) {
       case 'received':
         return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><Check className="h-3 w-3 mr-1" /> Erhalten</Badge>;
