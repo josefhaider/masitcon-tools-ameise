@@ -1303,18 +1303,46 @@ do_install() {
 
     cd "$app_dir"
     info "Starte Stack (kann beim ersten Mal einige Minuten dauern)..."
-    if ! $compose_cmd -f docker/docker-compose.yml up -d --build; then
+    local compose_output
+    if ! compose_output=$($compose_cmd -f docker/docker-compose.yml up -d --build 2>&1); then
         echo ""
         err "Docker-Stack konnte nicht gestartet werden!"
         echo ""
-        echo "  Häufige Ursachen:"
-        echo "    - Port bereits belegt"
-        echo "    - Nicht genügend Arbeitsspeicher"
-        echo "    - Docker-Daemon nicht laufend"
-        echo ""
-        echo "  Debugging:"
-        echo "    cd $app_dir"
-        echo "    $compose_cmd -f docker/docker-compose.yml logs"
+
+        # Spezifische Fehlerdiagnose
+        if echo "$compose_output" | grep -q "Pool overlaps"; then
+            err "Docker-Netzwerk-Konflikt: Subnet ${DOCKER_SUBNET} wird bereits verwendet!"
+            echo ""
+            echo "  Lösung A -- Anderes Subnet wählen (empfohlen):"
+            echo "    bash scripts/server-setup.sh --reconfigure"
+            echo "    → Bei 'Docker-Subnet' z.B. 172.22.0.0/16 oder 172.23.0.0/16 eingeben"
+            echo ""
+            echo "  Lösung B -- Konflikt-Netzwerk anzeigen + entfernen:"
+            echo "    docker network ls"
+            echo "    docker network inspect <NETZWERK-NAME>"
+            echo "    docker network rm <NETZWERK-NAME>"
+            echo "    bash scripts/server-setup.sh --repair"
+        elif echo "$compose_output" | grep -q "address already in use\|port is already allocated\|bind:"; then
+            err "Port bereits belegt!"
+            echo ""
+            echo "  Belegter Port anzeigen:"
+            echo "    sudo ss -tlnp | grep -E '${APP_PORT}|${API_PORT}|${DB_PORT}'"
+            echo ""
+            echo "  Anderen Port konfigurieren:"
+            echo "    bash scripts/server-setup.sh --reconfigure"
+        else
+            echo "  Häufige Ursachen:"
+            echo "    - Port bereits belegt"
+            echo "    - Nicht genügend Arbeitsspeicher"
+            echo "    - Docker-Daemon nicht laufend"
+            echo ""
+            echo "  Fehlermeldung:"
+            echo "$compose_output" | tail -5 | sed 's/^/    /'
+            echo ""
+            echo "  Debugging:"
+            echo "    cd $app_dir"
+            echo "    $compose_cmd -f docker/docker-compose.yml up -d --build"
+        fi
         echo ""
         echo "  Nach Behebung:"
         echo "    bash scripts/server-setup.sh --repair"
