@@ -248,7 +248,7 @@ fi
 migrate_old_config_vars() {
     # Fehlende Defaults sicherstellen
     [ -z "${INSTANCE_NAME:-}" ] && INSTANCE_NAME="ameise-production"
-    [ -z "${GIT_BRANCH:-}" ] && GIT_BRANCH="main"
+    [ -z "${GIT_BRANCH:-}" ] && GIT_BRANCH="master"
     [ -z "${PROTOCOL:-}" ] && PROTOCOL="https"
     [ -z "${SMTP_SENDER_NAME:-}" ] && SMTP_SENDER_NAME="Ameise Zeiterfassung"
     [ -z "${BACKUP_KEEP:-}" ] && BACKUP_KEEP=7
@@ -406,7 +406,7 @@ collect_config() {
         default_remote=$(git remote get-url origin 2>/dev/null)
     fi
     GIT_REMOTE=$(ask "Git-Repository URL" "$default_remote")
-    GIT_BRANCH=$(ask "Git-Branch" "${GIT_BRANCH:-main}")
+    GIT_BRANCH=$(ask "Git-Branch" "${GIT_BRANCH:-master}")
 
     # ── 2/5: Server & Zugang ──────────────────────────────────────
     header "Schritt 2/5 -- Server & Zugang"
