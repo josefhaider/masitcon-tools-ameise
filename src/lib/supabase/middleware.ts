@@ -1,6 +1,24 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+function clearAuthCookies(
+  request: NextRequest,
+  response: NextResponse
+): void {
+  const authCookies = request.cookies
+    .getAll()
+    .filter(
+      (c) =>
+        c.name.startsWith("sb-") ||
+        c.name.includes("supabase") ||
+        c.name.includes("auth-token")
+    );
+
+  for (const cookie of authCookies) {
+    response.cookies.set(cookie.name, "", { maxAge: 0, path: "/" });
+  }
+}
+
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -33,7 +51,9 @@ export async function updateSession(request: NextRequest) {
     if (!user && !request.nextUrl.pathname.startsWith("/login")) {
       const url = request.nextUrl.clone();
       url.pathname = "/login";
-      return NextResponse.redirect(url);
+      const redirect = NextResponse.redirect(url);
+      clearAuthCookies(request, redirect);
+      return redirect;
     }
 
     return supabaseResponse;
@@ -43,7 +63,9 @@ export async function updateSession(request: NextRequest) {
     if (!request.nextUrl.pathname.startsWith("/login")) {
       const url = request.nextUrl.clone();
       url.pathname = "/login";
-      return NextResponse.redirect(url);
+      const redirect = NextResponse.redirect(url);
+      clearAuthCookies(request, redirect);
+      return redirect;
     }
 
     return supabaseResponse;
