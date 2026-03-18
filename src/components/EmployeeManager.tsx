@@ -462,16 +462,17 @@ const EmployeeManager = () => {
 
     setSavingEmail(true);
     try {
-      const { data, error } = await supabase.functions.invoke('admin-update-user', {
-        body: {
+      const response = await fetch('/api/employees/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           action: 'update_email',
           target_user_id: selectedUserId,
           new_email: editedEmail.trim(),
-        },
+        }),
       });
-
-      if (error) throw new Error(error.message);
-      if (data?.error) throw new Error(data.error);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'E-Mail konnte nicht geändert werden');
 
       setEmployeeEmail(editedEmail.trim());
       toast.success('E-Mail-Adresse aktualisiert');
@@ -491,16 +492,17 @@ const EmployeeManager = () => {
 
     setResettingPassword(true);
     try {
-      const { data, error } = await supabase.functions.invoke('admin-update-user', {
-        body: {
+      const response = await fetch('/api/employees/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           action: 'reset_password',
           target_user_id: selectedUserId,
           new_password: newPassword,
-        },
+        }),
       });
-
-      if (error) throw new Error(error.message);
-      if (data?.error) throw new Error(data.error);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Passwort konnte nicht zurückgesetzt werden');
 
       setNewPassword("");
       toast.success('Passwort wurde zurückgesetzt');
@@ -517,15 +519,16 @@ const EmployeeManager = () => {
 
     setResettingPassword(true);
     try {
-      const { data, error } = await supabase.functions.invoke('admin-update-user', {
-        body: {
+      const response = await fetch('/api/employees/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           action: 'send_password_reset',
           target_user_id: selectedUserId,
-        },
+        }),
       });
-
-      if (error) throw new Error(error.message);
-      if (data?.error) throw new Error(data.error);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Reset-Link konnte nicht generiert werden');
 
       if (data?.reset_link) {
         setResetLink(data.reset_link);
@@ -580,15 +583,16 @@ const EmployeeManager = () => {
     setArchiving(true);
     try {
       const action = isArchived ? 'unarchive_user' : 'archive_user';
-      const { data, error } = await supabase.functions.invoke('admin-update-user', {
-        body: {
+      const response = await fetch('/api/employees/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           action,
           target_user_id: selectedUserId,
-        },
+        }),
       });
-
-      if (error) throw new Error(error.message);
-      if (data?.error) throw new Error(data.error);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Aktion konnte nicht ausgeführt werden');
 
       setIsArchived(!isArchived);
       toast.success(isArchived ? 'Mitarbeiter reaktiviert' : 'Mitarbeiter archiviert');
@@ -612,16 +616,17 @@ const EmployeeManager = () => {
 
     setDeleting(true);
     try {
-      const { data, error } = await supabase.functions.invoke('admin-update-user', {
-        body: {
+      const response = await fetch('/api/employees/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           action: 'delete_user',
           target_user_id: selectedUserId,
           confirmation_code: deleteConfirmationCode,
-        },
+        }),
       });
-
-      if (error) throw new Error(error.message);
-      if (data?.error) throw new Error(data.error);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Mitarbeiter konnte nicht gelöscht werden');
 
       toast.success(data.message || 'Mitarbeiter wurde gelöscht');
       setDeleteDialogOpen(false);
@@ -819,21 +824,19 @@ const EmployeeManager = () => {
     setCreatingEmployee(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('create-employee', {
-        body: {
+      const response = await fetch('/api/employees/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           full_name: full_name.trim(),
           email: email.trim(),
           password: password,
           employee_number: employee_number.trim() || undefined,
-        },
+        }),
       });
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      if (data?.error) {
-        throw new Error(data.error);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Fehler beim Anlegen des Mitarbeiters');
       }
 
       toast.success("Mitarbeiter wurde erfolgreich angelegt");
