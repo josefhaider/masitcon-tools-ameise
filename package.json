@@ -15,6 +15,7 @@
     "db:apply": "bash scripts/apply-migration.sh",
     "db:backup": "bash scripts/db-backup.sh backup",
     "db:restore": "bash scripts/db-backup.sh restore",
+    "db:restore-legacy": "bash scripts/restore-legacy-backup.sh",
     "setup": "bash scripts/dev-setup.sh"
   },
   "dependencies": {

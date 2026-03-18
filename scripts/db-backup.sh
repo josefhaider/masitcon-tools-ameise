@@ -42,7 +42,8 @@ die()    { err "$1"; exit 1; }
 # ─── Env-Datei: einzelne Variable lesen (ohne sourcing) ──────────
 env_peek() {
     local file="$1" var="$2"
-    grep -m1 "^${var}=" "$file" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'"
+    # || true verhindert Pipeline-Fehler (set -e / pipefail) wenn Variable nicht gesetzt ist
+    grep -m1 "^${var}=" "$file" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" || true
 }
 
 env_label() {
