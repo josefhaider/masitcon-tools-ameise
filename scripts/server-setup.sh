@@ -1574,25 +1574,22 @@ do_backup() {
     local backup_ok=true
 
     if [ -d "$app_dir" ]; then
-        cd "$app_dir"
-        info "Erstelle Datenbank-Dump..."
-
-        if $compose_cmd -f docker/docker-compose.yml ps db 2>/dev/null | grep -qiE 'running|up'; then
-            if $compose_cmd -f docker/docker-compose.yml exec -T db \
-                    pg_dump -U postgres --format=plain 2>/dev/null \
-                    > "${backup_dir}/db.sql"; then
-                local dump_size
-                dump_size=$(du -sh "${backup_dir}/db.sql" 2>/dev/null | cut -f1)
-                log "Datenbank-Dump OK (${dump_size})"
+        # Datenbank-Backup via db-backup.sh (Public-Schema + Auth-User + Manifest)
+        local db_backup_script="${app_dir}/scripts/db-backup.sh"
+        if [ -f "$db_backup_script" ]; then
+            if (cd "$app_dir" && bash "$db_backup_script" backup --dir "$backup_dir" --env docker/.env); then
+                log "Datenbank-Backup OK"
             else
-                warn "Datenbank-Dump fehlgeschlagen!"
+                warn "Datenbank-Backup fehlgeschlagen!"
                 backup_ok=false
             fi
         else
-            warn "DB-Container läuft nicht -- überspringe Dump."
+            warn "db-backup.sh nicht gefunden ($db_backup_script) -- überspringe DB-Dump."
+            backup_ok=false
         fi
 
-        [ -f "docker/.env" ] && cp "docker/.env" "${backup_dir}/docker.env" && chmod 600 "${backup_dir}/docker.env"
+        # Infra-Konfiguration sichern (nicht Teil von db-backup.sh)
+        [ -f "${app_dir}/docker/.env" ] && cp "${app_dir}/docker/.env" "${backup_dir}/docker.env" && chmod 600 "${backup_dir}/docker.env"
     fi
 
     [ -f "$config_file" ] && cp "$config_file" "${backup_dir}/config.env" && chmod 600 "${backup_dir}/config.env"

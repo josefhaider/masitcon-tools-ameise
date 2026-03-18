@@ -5,6 +5,7 @@
 #
 # Umgebungen:
 #   Entwicklung (lokal)  docker/.env.local   COMPOSE_PROJECT_NAME=ameise-local
+#   Stage (Server)       docker/.env         COMPOSE_PROJECT_NAME=ameise-staging
 #   Production (Server)  docker/.env         COMPOSE_PROJECT_NAME=ameise-production
 #
 # Backup:    bash scripts/db-backup.sh backup   [--dir <pfad>] [--env <env-file>]
@@ -12,10 +13,22 @@
 # Validate:  bash scripts/db-backup.sh validate [--env <env-file>]
 # Info:      bash scripts/db-backup.sh info     <backup-pfad>
 #
-# Prod→Lokal-Workflow:
+# Prod→Stage-Workflow:
 #   1. Auf Prod:   bash scripts/db-backup.sh backup --dir /tmp/backup --env docker/.env
-#   2. Kopieren:   scp -r prod:/tmp/backup /tmp/backup
-#   3. Lokal:      bash scripts/db-backup.sh restore /tmp/backup
+#   2. Kopieren:   scp -r prod-server:/tmp/backup /tmp/backup && scp -r /tmp/backup stage-server:/tmp/backup
+#                  oder direkt: rsync -a prod-server:/tmp/backup/ stage-server:/tmp/backup/
+#   3. Auf Stage:  bash scripts/db-backup.sh restore /tmp/backup --env docker/.env
+#
+# Backup-Strategie (Zwei-Dump):
+#   - db.dump:        Public-Schema komplett (Struktur + Daten), pg custom format
+#   - auth_data.sql:  auth.users + auth.identities (nur Daten, INSERT-Statements)
+#
+# Auth/Storage-SCHEMA-Struktur wird NICHT gedumpt — GoTrue und Storage API
+# verwalten ihre Schemas mit eigenen Migrationen. Nur die DATEN (User-Accounts,
+# Identities) werden separat gesichert und beim Restore eingespielt.
+#
+# Infrastruktur-Secrets (JWT_SECRET, POSTGRES_PASSWORD, etc.) bleiben beim
+# Restore unverändert — nur Anwendungsdaten + Auth-User werden übernommen.
 # ===================================================================
 set -euo pipefail
 
@@ -93,6 +106,14 @@ load_env() {
     info "Umgebung: ${PROJECT} (${env_file})"
 }
 
+# ─── DB-User ──────────────────────────────────────────────────────
+# In Supabase Docker ist "postgres" KEIN Superuser — "supabase_admin"
+# ist der echte Superuser. Für pg_dump/pg_restore brauchen wir
+# Superuser-Rechte (RLS Policies, Schema-übergreifende Ops).
+# TCP-Verbindung (-h 127.0.0.1) damit pg_hba.conf "trust" greift.
+DB_ADMIN_USER="supabase_admin"
+DB_ADMIN_HOST_FLAG="-h 127.0.0.1"
+
 # ─── DB-Verbindung prüfen ─────────────────────────────────────────
 check_db() {
     info "Prüfe DB-Verbindung..."
@@ -102,9 +123,14 @@ check_db() {
     log "Datenbank erreichbar"
 }
 
-# ─── psql-Abfrage ────────────────────────────────────────────────
+# ─── psql-Abfrage (gibt trimmed Output zurück) ────────────────────
 psql_q() {
-    $COMPOSE_CMD exec -T db psql -U postgres -tAc "$1" 2>/dev/null
+    $COMPOSE_CMD exec -T db psql -U "$DB_ADMIN_USER" $DB_ADMIN_HOST_FLAG -tAc "$1" 2>/dev/null
+}
+
+# ─── psql mit mehrzeiligem SQL (via stdin pipe) ────────────────────
+psql_exec() {
+    $COMPOSE_CMD exec -T db psql -U "$DB_ADMIN_USER" $DB_ADMIN_HOST_FLAG -d "$DB_NAME" -v ON_ERROR_STOP=0 2>&1
 }
 
 # ─── Datei-Größe in Bytes ─────────────────────────────────────────
@@ -113,7 +139,7 @@ file_size_bytes() {
     stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null || echo "0"
 }
 
-# ─── JSON-Feld aus Manifest lesen ───────────────────────────────
+# ─── JSON-Feld aus Manifest lesen (via Python3) ───────────────────
 manifest_get() {
     local manifest="$1" field="$2"
     python3 -c "
@@ -158,25 +184,49 @@ cmd_backup() {
     abs_backup_dir=$(cd "$backup_dir" && pwd)
     info "Backup-Verzeichnis: ${abs_backup_dir}"
 
-    # ── Datenbank-Dump ───────────────────────────────────────────
-    info "Erstelle Datenbank-Dump (custom format, komprimiert)..."
+    # ── 1. Public-Schema-Dump (Struktur + Daten) ──────────────────
+    info "Erstelle Public-Schema-Dump (custom format, komprimiert)..."
 
     if $COMPOSE_CMD exec -T db pg_dump \
-        -U postgres \
+        -U "$DB_ADMIN_USER" $DB_ADMIN_HOST_FLAG \
         --format=custom \
         --compress=6 \
         --no-password \
+        --schema=public \
         "$DB_NAME" \
         > "${backup_dir}/db.dump"; then
         local dump_size
         dump_size=$(du -sh "${backup_dir}/db.dump" 2>/dev/null | cut -f1)
-        log "Datenbank-Dump OK (${dump_size})"
+        log "Public-Schema-Dump OK (${dump_size})"
     else
         rm -f "${backup_dir}/db.dump" 2>/dev/null || true
         die "Datenbank-Dump fehlgeschlagen!"
     fi
 
-    # ── Angewendete Migrationen ──────────────────────────────────
+    # ── 2. Auth-Daten-Dump (nur Daten, INSERT-Statements) ─────────
+    # Nur auth.users + auth.identities — KEINE Schema-Struktur.
+    # GoTrue verwaltet das Auth-Schema mit eigenen Migrationen.
+    info "Erstelle Auth-Daten-Dump (users + identities)..."
+
+    if $COMPOSE_CMD exec -T db pg_dump \
+        -U "$DB_ADMIN_USER" $DB_ADMIN_HOST_FLAG \
+        --data-only \
+        --inserts \
+        --rows-per-insert=100 \
+        --table=auth.users \
+        --table=auth.identities \
+        --no-password \
+        "$DB_NAME" \
+        > "${backup_dir}/auth_data.sql"; then
+        local auth_lines
+        auth_lines=$(grep -c "INSERT INTO" "${backup_dir}/auth_data.sql" 2>/dev/null || echo "0")
+        log "Auth-Daten-Dump OK (${auth_lines} INSERT-Statements)"
+    else
+        warn "Auth-Daten-Dump fehlgeschlagen — Backup ohne Auth-User"
+        echo "-- Auth-Daten-Dump fehlgeschlagen" > "${backup_dir}/auth_data.sql"
+    fi
+
+    # ── 3. Angewendete Migrationen ────────────────────────────────
     info "Lese angewendete Migrationen..."
     local migrations_json="[]"
 
@@ -199,7 +249,7 @@ import json; print(json.dumps(lines))
         echo "" > "${backup_dir}/applied_migrations.txt"
     fi
 
-    # ── Zeilenanzahlen ───────────────────────────────────────────
+    # ── 4. Zeilenanzahlen ─────────────────────────────────────────
     info "Lese Zeilenanzahlen (public-Schema)..."
 
     local table_counts_json
@@ -207,7 +257,7 @@ import json; print(json.dumps(lines))
 import subprocess, json, sys
 
 def run(sql):
-    cmd = '''$COMPOSE_CMD exec -T db psql -U postgres -tAc \"''' + sql + '''\"'''
+    cmd = '''$COMPOSE_CMD exec -T db psql -U $DB_ADMIN_USER $DB_ADMIN_HOST_FLAG -tAc \"''' + sql + '''\"'''
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     return r.stdout.strip()
 
@@ -225,29 +275,31 @@ for tbl in tables:
 print(json.dumps(counts))
 " 2>/dev/null || echo "{}")
 
-    # Auth & Storage
     local auth_users storage_objects
     auth_users=$(psql_q "SELECT COUNT(*) FROM auth.users" 2>/dev/null | tr -d ' ' || echo "0")
     storage_objects=$(psql_q "SELECT COUNT(*) FROM storage.objects" 2>/dev/null | tr -d ' ' || echo "0")
 
-    # ── Manifest erstellen ───────────────────────────────────────
+    # ── 5. Manifest erstellen ─────────────────────────────────────
     info "Erstelle Manifest..."
-    local dump_size_bytes
+    local dump_size_bytes auth_data_size_bytes
     dump_size_bytes=$(file_size_bytes "${backup_dir}/db.dump")
+    auth_data_size_bytes=$(file_size_bytes "${backup_dir}/auth_data.sql")
 
     python3 -c "
 import json
 manifest = {
-    'timestamp':         '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    'environment':       '${PROJECT}',
-    'env_file':          '${env_file}',
-    'db_name':           '${DB_NAME}',
-    'dump_size_bytes':   ${dump_size_bytes},
-    'dump_format':       'custom',
-    'auth_users':        int('${auth_users}') if '${auth_users}'.isdigit() else 0,
-    'storage_objects':   int('${storage_objects}') if '${storage_objects}'.isdigit() else 0,
-    'applied_migrations': json.loads('${migrations_json}'),
-    'table_row_counts':  json.loads(r'''${table_counts_json}'''),
+    'timestamp':            '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+    'environment':          '${PROJECT}',
+    'env_file':             '${env_file}',
+    'db_name':              '${DB_NAME}',
+    'dump_size_bytes':      ${dump_size_bytes},
+    'auth_data_size_bytes': ${auth_data_size_bytes},
+    'dump_format':          'custom',
+    'auth_users':           int('${auth_users}') if '${auth_users}'.isdigit() else 0,
+    'storage_objects':      int('${storage_objects}') if '${storage_objects}'.isdigit() else 0,
+    'includes_auth_data':   True,
+    'applied_migrations':   json.loads('${migrations_json}'),
+    'table_row_counts':     json.loads(r'''${table_counts_json}'''),
 }
 with open('${backup_dir}/manifest.json', 'w') as f:
     json.dump(manifest, f, indent=2, ensure_ascii=False)
@@ -258,8 +310,9 @@ print('OK')
     log "Backup erfolgreich: ${abs_backup_dir}"
     echo ""
     info "Dateien:"
-    info "  db.dump                $(du -sh "${backup_dir}/db.dump" | cut -f1)"
-    [ -f "${backup_dir}/manifest.json" ]         && info "  manifest.json          $(du -sh "${backup_dir}/manifest.json" | cut -f1)"
+    info "  db.dump                $(du -sh "${backup_dir}/db.dump" | cut -f1)  (Public-Schema)"
+    info "  auth_data.sql          $(du -sh "${backup_dir}/auth_data.sql" 2>/dev/null | cut -f1)  (Auth-User + Identities)"
+    [ -f "${backup_dir}/manifest.json" ]          && info "  manifest.json          $(du -sh "${backup_dir}/manifest.json" | cut -f1)"
     [ -f "${backup_dir}/applied_migrations.txt" ] && info "  applied_migrations.txt"
     echo ""
     info "Tipp: bash scripts/db-backup.sh info ${backup_dir}"
@@ -291,12 +344,13 @@ cmd_info() {
         local dump_size
         dump_size=$(du -sh "${backup_path}/db.dump" | cut -f1)
         info "Dump-Größe: ${dump_size}"
+        [ -f "${backup_path}/auth_data.sql" ] && info "Auth-Daten: vorhanden"
         echo ""
         return
     fi
 
     python3 -c "
-import json, sys
+import json, sys, os
 
 with open('${backup_path}/manifest.json') as f:
     d = json.load(f)
@@ -315,6 +369,11 @@ print(f\"  {'Datenbank:':<26} {d.get('db_name','?')}\")
 print(f\"  {'Dump-Format:':<26} {d.get('dump_format','?')}\")
 print(f\"  {'Dump-Größe:':<26} {fmt_bytes(d.get('dump_size_bytes',0))}\")
 print(f\"  {'Auth-Benutzer:':<26} {d.get('auth_users','?')}\")
+has_auth = d.get('includes_auth_data', False)
+auth_label = 'Ja' if has_auth else 'Nein'
+if has_auth:
+    auth_label += f\" ({fmt_bytes(d.get('auth_data_size_bytes', 0))})\"
+print(f\"  {'Auth-Daten im Backup:':<26} {auth_label}\")
 print(f\"  {'Storage-Objekte:':<26} {d.get('storage_objects','?')}\")
 
 migs = d.get('applied_migrations', [])
@@ -386,8 +445,8 @@ cmd_validate() {
     local local_count=${#local_migrations[@]}
     local applied_count=${#applied_migrations[@]}
 
-    printf "  %-44s %s\n" "Lokale Migration-Dateien:"         "$local_count"
-    printf "  %-44s %s\n" "Angewendete Migrationen (DB):"    "$applied_count"
+    printf "  %-44s %s\n" "Lokale Migration-Dateien:"      "$local_count"
+    printf "  %-44s %s\n" "Angewendete Migrationen (DB):"  "$applied_count"
 
     local missing_in_db=()
     for m in "${local_migrations[@]:-}"; do
@@ -474,13 +533,13 @@ cmd_validate() {
     echo ""
 
     local auth_users auth_sessions storage_objs
-    auth_users=$(psql_q    "SELECT COUNT(*) FROM auth.users"    2>/dev/null | tr -d ' ' || echo "n/a")
-    auth_sessions=$(psql_q "SELECT COUNT(*) FROM auth.sessions" 2>/dev/null | tr -d ' ' || echo "n/a")
+    auth_users=$(psql_q    "SELECT COUNT(*) FROM auth.users"     2>/dev/null | tr -d ' ' || echo "n/a")
+    auth_sessions=$(psql_q "SELECT COUNT(*) FROM auth.sessions"  2>/dev/null | tr -d ' ' || echo "n/a")
     storage_objs=$(psql_q  "SELECT COUNT(*) FROM storage.objects" 2>/dev/null | tr -d ' ' || echo "n/a")
 
-    printf "    %-40s %10s\n" "auth.users"       "$auth_users"
-    printf "    %-40s %10s\n" "auth.sessions"    "$auth_sessions"
-    printf "    %-40s %10s\n" "storage.objects"  "$storage_objs"
+    printf "    %-40s %10s\n" "auth.users"      "$auth_users"
+    printf "    %-40s %10s\n" "auth.sessions"   "$auth_sessions"
+    printf "    %-40s %10s\n" "storage.objects" "$storage_objs"
 
     echo ""
 
@@ -533,20 +592,38 @@ cmd_restore() {
 
     header "DB Restore: ${PROJECT}"
 
+    # ── Backup-Info anzeigen ──────────────────────────────────────
+    local has_auth_data=false
+    if [ -f "${backup_path}/auth_data.sql" ]; then
+        local auth_insert_count
+        auth_insert_count=$(grep -c "INSERT INTO" "${backup_path}/auth_data.sql" 2>/dev/null || echo "0")
+        if [ "$auth_insert_count" -gt 0 ]; then
+            has_auth_data=true
+        fi
+    fi
+
     if [ -f "${backup_path}/manifest.json" ]; then
-        local backup_ts backup_env
+        local backup_ts backup_env backup_auth_users
         backup_ts=$(python3 -c "import json; d=json.load(open('${backup_path}/manifest.json')); print(d.get('timestamp','?'))" 2>/dev/null || echo "?")
         backup_env=$(python3 -c "import json; d=json.load(open('${backup_path}/manifest.json')); print(d.get('environment','?'))" 2>/dev/null || echo "?")
+        backup_auth_users=$(python3 -c "import json; d=json.load(open('${backup_path}/manifest.json')); print(d.get('auth_users','?'))" 2>/dev/null || echo "?")
 
         info "Backup erstellt:   ${backup_ts}"
         info "Backup-Umgebung:   ${backup_env}"
         info "Ziel-Umgebung:     ${PROJECT}"
+        info "Auth-Benutzer:     ${backup_auth_users}"
+        if $has_auth_data; then
+            info "Auth-Daten:        werden übernommen"
+        else
+            warn "Auth-Daten:        NICHT im Backup enthalten"
+        fi
 
         if [ "$backup_env" != "$PROJECT" ]; then
             echo ""
             warn "Umgebungs-Wechsel erkannt!"
             warn "  Backup: '${backup_env}'  →  Ziel: '${PROJECT}'"
             warn "  Infrastruktur-Secrets (JWT, Passwörter) bleiben unverändert."
+            warn "  Auth-Sessions werden ungültig — Benutzer müssen sich neu anmelden."
         fi
     else
         warn "Kein manifest.json — Backup ohne Metadaten"
@@ -558,7 +635,7 @@ cmd_restore() {
 
     echo ""
     echo -e "  ${RED}${BOLD}ACHTUNG: Diese Aktion überschreibt ALLE Daten in '${PROJECT}'!${NC}"
-    echo -e "  ${RED}Alle bestehenden Daten werden unwiderruflich ersetzt.${NC}"
+    echo -e "  ${RED}Public-Schema wird komplett ersetzt. Auth-User werden neu eingespielt.${NC}"
     echo ""
     read -rp "  Zur Bestätigung 'RESTORE' eingeben: " confirm_input
 
@@ -571,7 +648,7 @@ cmd_restore() {
     echo ""
     check_db
 
-    # ── Aktive Verbindungen trennen ──────────────────────────────
+    # ── Schritt 1: Aktive Verbindungen trennen ────────────────────
     info "Trenne aktive DB-Verbindungen..."
     psql_q "SELECT pg_terminate_backend(pid)
             FROM pg_stat_activity
@@ -579,7 +656,44 @@ cmd_restore() {
               AND pid <> pg_backend_pid()" >/dev/null || true
     log "Verbindungen getrennt"
 
-    # ── Dump in Container kopieren ───────────────────────────────
+    # ── Schritt 2: Auth-Daten importieren ─────────────────────────
+    # ZUERST Auth-User einspielen, DANN Public-Schema restoren.
+    # Grund: public.profiles hat FK auf auth.users(id). Beim pg_restore
+    # des Public-Schemas müssen die referenzierten auth.users bereits existieren.
+    #
+    # session_replication_role = replica deaktiviert FK-Constraint-Trigger,
+    # damit DELETE FROM auth.users möglich ist obwohl public.profiles
+    # noch darauf referenziert.
+    if $has_auth_data; then
+        info "Importiere Auth-Daten (users + identities)..."
+
+        local auth_result
+        auth_result=$(
+            {
+                echo "SET session_replication_role = replica;"
+                echo "-- Abhängige Auth-Tabellen leeren (FK-Reihenfolge)"
+                echo "TRUNCATE auth.sessions CASCADE;"
+                echo "TRUNCATE auth.refresh_tokens CASCADE;"
+                echo "TRUNCATE auth.mfa_challenges CASCADE;"
+                echo "TRUNCATE auth.mfa_factors CASCADE;"
+                echo "TRUNCATE auth.flow_state CASCADE;"
+                echo "TRUNCATE auth.identities CASCADE;"
+                echo "TRUNCATE auth.one_time_tokens CASCADE;"
+                echo "DELETE FROM auth.users;"
+                echo "-- Auth-Daten aus Backup einfügen"
+                cat "${backup_path}/auth_data.sql"
+                echo "SET session_replication_role = DEFAULT;"
+            } | psql_exec
+        ) 2>&1 || true
+
+        local restored_users
+        restored_users=$(psql_q "SELECT COUNT(*) FROM auth.users" 2>/dev/null | tr -d ' ' || echo "?")
+        log "Auth-Daten importiert (${restored_users} Benutzer)"
+    else
+        info "Kein auth_data.sql im Backup — Auth-User bleiben unverändert"
+    fi
+
+    # ── Schritt 3: Public-Schema restoren ─────────────────────────
     info "Kopiere Dump in Container..."
     local container_name="${PROJECT}-db"
 
@@ -588,8 +702,7 @@ cmd_restore() {
     fi
     log "Dump kopiert ($(du -sh "${backup_path}/db.dump" | cut -f1))"
 
-    # ── pg_restore ausführen ─────────────────────────────────────
-    info "Führe pg_restore aus (das kann einige Minuten dauern)..."
+    info "Führe pg_restore aus (Public-Schema)..."
 
     local restore_exit=0
     $COMPOSE_CMD exec -T db pg_restore \
@@ -598,7 +711,8 @@ cmd_restore() {
         --no-owner \
         --no-privileges \
         --no-comments \
-        -U postgres \
+        --disable-triggers \
+        -U "$DB_ADMIN_USER" $DB_ADMIN_HOST_FLAG \
         -d "$DB_NAME" \
         /tmp/db_restore.dump \
         2>&1 | while IFS= read -r line; do
@@ -619,6 +733,7 @@ cmd_restore() {
     log "Restore abgeschlossen: ${PROJECT}"
     echo ""
 
+    # ── Schritt 4: Automatische Validierung ───────────────────────
     echo -e "  ${CYAN}Starte automatische Validierung...${NC}"
     echo ""
     cmd_validate --env "$env_file"
@@ -700,8 +815,9 @@ cmd_menu() {
 
     case "$action_choice" in
         1)
-            local default_dir="backups/$(date +%Y-%m-%d_%H%M%S)"
             echo -e "  ${BOLD}Backup-Verzeichnis:${NC}"
+            echo ""
+            local default_dir="backups/$(date +%Y-%m-%d_%H%M%S)"
             echo -e "    ${DIM}Standard: ${default_dir}${NC}"
             echo ""
             read -rp "  Verzeichnis eingeben (Enter = Standard): " backup_dir_input
@@ -709,27 +825,109 @@ cmd_menu() {
             echo ""
             cmd_backup --dir "$backup_dir" --env "$env_file"
             ;;
+
         2)
-            echo -e "  ${BOLD}Backup-Pfad eingeben:${NC}"
+            echo -e "  ${BOLD}Backup auswählen:${NC}"
             echo ""
-            read -rp "  Backup-Verzeichnis: " restore_path
+
+            local backup_entries=()
+            local j=1
+
+            if ls -d backups/????-??-??_* 2>/dev/null | sort -r | head -10 | grep -q .; then
+                echo -e "  ${DIM}Verfügbare Backups (neueste zuerst):${NC}"
+                echo ""
+                while IFS= read -r dir; do
+                    [ -f "${dir}/db.dump" ] || continue
+                    local size_label env_lbl=""
+                    size_label=$(du -sh "${dir}/db.dump" 2>/dev/null | cut -f1 || echo "?")
+                    if [ -f "${dir}/manifest.json" ]; then
+                        env_lbl=$(python3 -c "import json; d=json.load(open('${dir}/manifest.json')); print(d.get('environment',''))" 2>/dev/null || echo "")
+                    fi
+                    echo -e "    ${CYAN}[${j}]${NC} ${dir}  ${DIM}${size_label}${NC}  ${DIM}${env_lbl}${NC}"
+                    backup_entries+=("$dir")
+                    j=$((j + 1))
+                done < <(ls -d backups/????-??-??_* 2>/dev/null | sort -r | head -10)
+                echo ""
+            fi
+
+            echo -e "    ${CYAN}[p]${NC} Anderen Pfad eingeben"
+            echo ""
+
+            local restore_choice restore_path=""
+            read -rp "  Wähle Backup [1-$((j-1))/p]: " restore_choice
+
+            case "$restore_choice" in
+                p|P)
+                    read -rp "  Backup-Verzeichnis: " restore_path
+                    ;;
+                *)
+                    local ridx=$((restore_choice - 1))
+                    if [ "$ridx" -lt 0 ] || [ "$ridx" -ge ${#backup_entries[@]} ] 2>/dev/null; then
+                        die "Ungültige Auswahl."
+                    fi
+                    restore_path="${backup_entries[$ridx]}"
+                    ;;
+            esac
+
             echo ""
             cmd_restore "$restore_path" --env "$env_file"
             ;;
+
         3)
             cmd_validate --env "$env_file"
             ;;
+
         4)
-            echo -e "  ${BOLD}Backup-Pfad eingeben:${NC}"
+            echo -e "  ${BOLD}Backup für Info-Anzeige:${NC}"
             echo ""
-            read -rp "  Backup-Verzeichnis: " info_path
+
+            local info_entries=()
+            local k=1
+
+            if ls -d backups/????-??-??_* 2>/dev/null | sort -r | head -10 | grep -q .; then
+                while IFS= read -r dir; do
+                    [ -f "${dir}/db.dump" ] || continue
+                    local env_lbl=""
+                    if [ -f "${dir}/manifest.json" ]; then
+                        env_lbl=$(python3 -c "import json; d=json.load(open('${dir}/manifest.json')); print(d.get('environment',''))" 2>/dev/null || echo "")
+                    fi
+                    echo -e "    ${CYAN}[${k}]${NC} ${dir}  ${DIM}${env_lbl}${NC}"
+                    info_entries+=("$dir")
+                    k=$((k + 1))
+                done < <(ls -d backups/????-??-??_* 2>/dev/null | sort -r | head -10)
+                echo ""
+            fi
+
+            echo -e "    ${CYAN}[p]${NC} Anderen Pfad eingeben"
+            echo ""
+
+            local info_choice info_path=""
+            read -rp "  Wähle Backup [1-$((k-1))/p]: " info_choice
+
+            case "$info_choice" in
+                p|P)
+                    read -rp "  Backup-Verzeichnis: " info_path
+                    ;;
+                *)
+                    local iidx=$((info_choice - 1))
+                    if [ "$iidx" -lt 0 ] || [ "$iidx" -ge ${#info_entries[@]} ] 2>/dev/null; then
+                        die "Ungültige Auswahl."
+                    fi
+                    info_path="${info_entries[$iidx]}"
+                    ;;
+            esac
+
             echo ""
             cmd_info "$info_path"
             ;;
+
         5)
+            echo ""
             info "Beendet."
+            echo ""
             exit 0
             ;;
+
         *)
             die "Ungültige Auswahl: ${action_choice}"
             ;;
@@ -753,15 +951,26 @@ usage() {
     echo "    --dir   Zielverzeichnis (Standard: ./backups/YYYY-MM-DD_HHMMSS)"
     echo "    --env   Env-Datei       (Standard: docker/.env.local)"
     echo ""
+    echo "  Backup-Inhalt:"
+    echo "    db.dump          Public-Schema (Struktur + Daten), pg custom format"
+    echo "    auth_data.sql    Auth-User + Identities (nur Daten, INSERT-Statements)"
+    echo "    manifest.json    Metadaten (Zeitstempel, Zeilenanzahlen, etc.)"
+    echo ""
     echo "  Umgebungen:"
-    echo "    Entwicklung   docker/.env.local   (lokal, COMPOSE_PROJECT_NAME=ameise-local)"
-    echo "    Production    docker/.env         (Server, COMPOSE_PROJECT_NAME=ameise-production)"
+    echo "    Entwicklung   docker/.env.local   (lokal,  COMPOSE_PROJECT_NAME=ameise-local)"
+    echo "    Stage         docker/.env         (Stage,   COMPOSE_PROJECT_NAME=ameise-staging)"
+    echo "    Production    docker/.env         (Prod,    COMPOSE_PROJECT_NAME=ameise-production)"
+    echo ""
+    echo "  Prod→Stage-Workflow:"
+    echo "    1. Auf Prod:   bash scripts/db-backup.sh backup --dir /tmp/backup --env docker/.env"
+    echo "    2. Kopieren:   scp -r prod-server:/tmp/backup /tmp/ && scp -r /tmp/backup stage-server:/tmp/"
+    echo "    3. Auf Stage:  bash scripts/db-backup.sh restore /tmp/backup --env docker/.env"
     echo ""
     echo "  Beispiele:"
     echo "    bash scripts/db-backup.sh backup"
-    echo "    bash scripts/db-backup.sh backup --dir /mnt/nas/backups/ameise"
-    echo "    bash scripts/db-backup.sh info backups/2026-03-17_120000"
-    echo "    bash scripts/db-backup.sh restore backups/2026-03-17_120000"
+    echo "    bash scripts/db-backup.sh backup --dir /mnt/nas/backups/ameise --env docker/.env"
+    echo "    bash scripts/db-backup.sh info backups/2026-03-18_120000"
+    echo "    bash scripts/db-backup.sh restore backups/2026-03-18_120000"
     echo "    bash scripts/db-backup.sh validate --env docker/.env"
     echo ""
 }
@@ -773,11 +982,11 @@ COMMAND="${1:-}"
 shift || true
 
 case "$COMMAND" in
-    backup)        cmd_backup   "$@" ;;
-    restore)       cmd_restore  "$@" ;;
-    validate)      cmd_validate "$@" ;;
-    info)          cmd_info     "$@" ;;
-    menu)          cmd_menu ;;
+    backup)         cmd_backup   "$@" ;;
+    restore)        cmd_restore  "$@" ;;
+    validate)       cmd_validate "$@" ;;
+    info)           cmd_info     "$@" ;;
+    menu)           cmd_menu ;;
     help|--help|-h) usage ;;
     "")
         if [ -t 0 ]; then
