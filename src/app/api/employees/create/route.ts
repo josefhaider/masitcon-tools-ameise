@@ -25,7 +25,6 @@ export async function POST(request: Request) {
       );
     }
 
-    console.log("Creating auth user for:", email);
     const { data: authData, error: authError } =
       await adminClient.auth.admin.createUser({
         email,
@@ -35,7 +34,6 @@ export async function POST(request: Request) {
       });
 
     if (authError) {
-      console.error("Auth user creation failed:", authError);
       if (authError.message.includes("already registered")) {
         return NextResponse.json(
           { error: "Diese E-Mail-Adresse wird bereits verwendet" },
@@ -44,8 +42,6 @@ export async function POST(request: Request) {
       }
       throw authError;
     }
-
-    console.log("Auth user created:", authData.user.id);
 
     let profileReady = false;
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -61,15 +57,7 @@ export async function POST(request: Request) {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    if (!profileReady) {
-      console.warn(
-        "Profile not created by trigger after 5s for:",
-        authData.user.id
-      );
-    }
-
     if (employee_number && profileReady) {
-      console.log("Updating profile for:", authData.user.id);
       const { error: profileError } = await adminClient
         .from("profiles")
         .update({ employee_number })
@@ -78,7 +66,6 @@ export async function POST(request: Request) {
         console.error("Profile update failed:", profileError);
     }
 
-    console.log("Employee created successfully:", authData.user.id);
     return NextResponse.json({
       success: true,
       user_id: authData.user.id,

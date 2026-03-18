@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RolesProvider } from "@/contexts/permissions-context";
 import { ProfileProvider } from "@/contexts/profile-context";
-import { useSidebar } from "@/context/SidebarContext";
+import { useSidebar } from "@/contexts/SidebarContext";
 import AppHeader from "@/layout/AppHeader";
 import AppSidebar from "@/layout/AppSidebar";
 import Backdrop from "@/layout/Backdrop";

@@ -8,12 +8,9 @@
 # Status:            bash scripts/server-setup.sh --status
 # Diagnose:          bash scripts/server-setup.sh --doctor
 # Reparatur:         bash scripts/server-setup.sh --repair
-# Konfiguration:     bash scripts/server-setup.sh --reconfigure
-# Backup:            bash scripts/server-setup.sh --backup
 # Deinstallieren:    bash scripts/server-setup.sh --uninstall
-# Firewall haerten:  bash scripts/server-setup.sh --harden
 #
-# Unterstuetzt mehrere Instanzen auf einem Server (Production + Staging).
+# Unterstützt mehrere Instanzen auf einem Server (Production + Staging).
 # Isolation via INSTANCE_NAME und BASE_DIR.
 # ===================================================================
 set -uo pipefail
@@ -65,7 +62,6 @@ ask() {
 ask_secret() {
     local prompt="$1" result
     read -rsp "  $prompt: " result
-    echo "" >&2
     echo "$result"
 }
 
@@ -90,7 +86,10 @@ find_free_port() {
     while ! is_port_free "$port" && [ "$port" -lt "$max" ]; do
         port=$((port + 1))
     done
-    if [ "$port" -ge "$max" ]; then echo ""; return 1; fi
+    if [ "$port" -ge "$max" ]; then
+        echo ""
+        return 1
+    fi
     echo "$port"
 }
 
@@ -104,16 +103,7 @@ detect_compose() {
     fi
 }
 
-# ─── App-Verzeichnis erkennen ────────────────────────────────────
-detect_app_dir() {
-    local base="$1"
-    if   [ -d "${base}/app/.git" ]; then echo "${base}/app"
-    elif [ -d "${base}/app"      ]; then echo "${base}/app"
-    else                                  echo "${base}/app"
-    fi
-}
-
-# ─── Setup-Log ───────────────────────────────────────────────────
+# ─── Setup-Log ──────────────────────────────────────────────────
 SETUP_LOG=""
 
 setup_log_init() {
@@ -121,8 +111,10 @@ setup_log_init() {
     local timestamp
     timestamp=$(date +%Y%m%d-%H%M%S)
     SETUP_LOG="${base_dir}/setup-log-${timestamp}.txt"
-    mkdir -p "$base_dir" 2>/dev/null || sudo mkdir -p "$base_dir" 2>/dev/null || true
-    sudo chown "$(id -u):$(id -g)" "$base_dir" 2>/dev/null || true
+    if ! mkdir -p "$base_dir" 2>/dev/null; then
+        sudo mkdir -p "$base_dir" 2>/dev/null || true
+        sudo chown "$(whoami):$(id -gn)" "$base_dir" 2>/dev/null || true
+    fi
 
     cat > "$SETUP_LOG" << LOGHEADER
 ================================================================================
@@ -137,19 +129,32 @@ LOGHEADER
     chmod 600 "$SETUP_LOG" 2>/dev/null || true
 }
 
-slog()        { [ -z "$SETUP_LOG" ] && return; echo "[$(date '+%H:%M:%S')] $1" >> "$SETUP_LOG" 2>/dev/null || true; }
-slog_header() { [ -z "$SETUP_LOG" ] && return; { echo ""; echo "── $1 ─────────────────────────────────"; echo ""; } >> "$SETUP_LOG" 2>/dev/null || true; }
-slog_var()    { [ -z "$SETUP_LOG" ] && return; printf "  %-30s = %s\n" "$1" "$2" >> "$SETUP_LOG" 2>/dev/null || true; }
+slog() {
+    [ -z "$SETUP_LOG" ] && return
+    echo "[$(date '+%H:%M:%S')] $1" >> "$SETUP_LOG" 2>/dev/null || true
+}
+
+slog_header() {
+    [ -z "$SETUP_LOG" ] && return
+    { echo ""; echo "── $1 ──────────────────────────────────────────"; echo ""; } >> "$SETUP_LOG" 2>/dev/null || true
+}
+
+slog_var() {
+    [ -z "$SETUP_LOG" ] && return
+    printf "  %-30s = %s\n" "$1" "$2" >> "$SETUP_LOG" 2>/dev/null || true
+}
+
 slog_secret() {
     [ -z "$SETUP_LOG" ] && return
     local display_val
-    if [ -z "${2:-}" ] || [ "${2:-}" = "not-configured" ]; then
+    if [ -z "$2" ] || [ "$2" = "not-configured" ]; then
         display_val="(nicht gesetzt)"
     else
         display_val="${2:0:3}***${2: -2}"
     fi
     printf "  %-30s = %s\n" "$1" "$display_val" >> "$SETUP_LOG" 2>/dev/null || true
 }
+
 slog_finish() {
     [ -z "$SETUP_LOG" ] && return
     cat >> "$SETUP_LOG" << 'LOGFOOTER'
@@ -157,15 +162,14 @@ slog_finish() {
 ================================================================================
   SICHERHEITSHINWEIS
 
-  Dieses Log enthaelt sensible Daten (Supabase-Keys, SMTP-Zugangsdaten).
-  Nach Pruefung LOESCHEN:  rm -f THIS_FILE
+  Dieses Log enthält sensible Daten (Supabase-Keys, SMTP-Zugangsdaten).
+  Nach Prüfung LÖSCHEN:  rm -f THIS_FILE
 
-  Falls Sie Probleme melden: Passwoerter/Keys vorher schwaerzen!
+  Falls Sie Probleme melden: Passwörter/Keys vorher schwärzen!
 ================================================================================
 LOGFOOTER
     sed -i "s|THIS_FILE|$SETUP_LOG|g" "$SETUP_LOG" 2>/dev/null || true
 }
-
 
 # ─── Argument-Parsing ────────────────────────────────────────────
 MODE="setup"
@@ -181,14 +185,14 @@ Verwendung:
   bash server-setup.sh --status          Status anzeigen
   bash server-setup.sh --doctor          Diagnose (nur lesen)
   bash server-setup.sh --repair          Bekannte Probleme beheben
-  bash server-setup.sh --reconfigure     Konfiguration aendern
+  bash server-setup.sh --reconfigure     Konfiguration ändern
   bash server-setup.sh --backup          Backup erstellen
   bash server-setup.sh --uninstall       Deinstallieren
-  bash server-setup.sh --harden          Firewall haerten (optional)
+  bash server-setup.sh --harden          Firewall härten (optional)
   bash server-setup.sh --unharden        Firewall deaktivieren
 
 Optionen:
-  --base-dir DIR   Installations-Verzeichnis (ueberschreibt Auto-Detection)
+  --base-dir DIR   Installations-Verzeichnis (überschreibt Auto-Detection)
   --help, -h       Diese Hilfe anzeigen
 
 Mehrere Instanzen (Production + Staging):
@@ -199,26 +203,26 @@ Mehrere Instanzen (Production + Staging):
 Fehlersuche:
   1. bash server-setup.sh --doctor    → Was ist falsch?
   2. bash server-setup.sh --repair    → Automatisch beheben
-  3. bash server-setup.sh --doctor    → Pruefen ob OK
+  3. bash server-setup.sh --doctor    → Prüfen ob OK
 HELP
 }
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --update)      MODE="update"; shift ;;
-        --uninstall)   MODE="clean"; shift ;;
-        --status)      MODE="status"; shift ;;
-        --backup)      MODE="backup"; shift ;;
+        --update)    MODE="update"; shift ;;
+        --clean|--uninstall) MODE="clean"; shift ;;
+        --status)    MODE="status"; shift ;;
+        --backup)    MODE="backup"; shift ;;
         --reconfigure) MODE="reconfigure"; shift ;;
-        --harden)      MODE="harden"; shift ;;
-        --unharden)    MODE="unharden"; shift ;;
-        --doctor)      MODE="doctor"; shift ;;
-        --repair)      MODE="repair"; shift ;;
+        --harden)    MODE="harden"; shift ;;
+        --unharden)  MODE="unharden"; shift ;;
+        --doctor)    MODE="doctor"; shift ;;
+        --repair)    MODE="repair"; shift ;;
         --base-dir)
-            if [ -z "${2:-}" ]; then err "--base-dir braucht ein Verzeichnis"; exit 1; fi
+            if [ -z "${2:-}" ]; then err "--base-dir braucht ein Verzeichnis als Argument"; exit 1; fi
             BASE_DIR_OVERRIDE="$2"; shift 2 ;;
-        --help|-h) show_help; exit 0 ;;
-        *) err "Unbekannte Option: $1"; echo ""; show_help; exit 1 ;;
+        --help|-h)   show_help; exit 0 ;;
+        *)           err "Unbekannte Option: $1"; echo ""; show_help; exit 1 ;;
     esac
 done
 
@@ -228,30 +232,51 @@ if [ -z "$BASE_DIR_OVERRIDE" ]; then
     _candidate="$(dirname "$_script_dir")"
     _candidate_parent="$(dirname "$_candidate")"
     _candidate_grandparent="$(dirname "$_candidate_parent")"
-    if   [ -f "${_candidate_grandparent}/config.env" ]; then BASE_DIR_OVERRIDE="$_candidate_grandparent"
-    elif [ -f "${_candidate_parent}/config.env"      ]; then BASE_DIR_OVERRIDE="$_candidate_parent"
-    elif [ -f "${_candidate}/config.env"             ]; then BASE_DIR_OVERRIDE="$_candidate"
+    if [ -f "${_candidate_grandparent}/config.env" ]; then
+        BASE_DIR_OVERRIDE="$_candidate_grandparent"
+    elif [ -f "${_candidate_parent}/config.env" ]; then
+        BASE_DIR_OVERRIDE="$_candidate_parent"
+    elif [ -f "${_candidate}/config.env" ]; then
+        BASE_DIR_OVERRIDE="$_candidate"
     fi
     unset _script_dir _candidate _candidate_parent _candidate_grandparent
 fi
 
 # ─── Alte config.env-Variablen auf neue Namen mappen ─────────────
+# Wird nach source config.env aufgerufen, damit --doctor/--update/--repair
+# auch mit alten Installationen funktionieren.
 migrate_old_config_vars() {
-    : "${GIT_BRANCH:=main}"
-    : "${PROTOCOL:=https}"
-    : "${SMTP_SENDER_NAME:=Ameise Zeiterfassung}"
-    : "${BACKUP_KEEP:=7}"
-    : "${INSTANCE_NAME:=ameise-production}"
-    : "${DOCKER_SUBNET:=172.20.0.0/16}"
+    # Fehlende Defaults sicherstellen
+    [ -z "${INSTANCE_NAME:-}" ] && INSTANCE_NAME="ameise-production"
+    [ -z "${GIT_BRANCH:-}" ] && GIT_BRANCH="main"
+    [ -z "${PROTOCOL:-}" ] && PROTOCOL="https"
+    [ -z "${SMTP_SENDER_NAME:-}" ] && SMTP_SENDER_NAME="Ameise Zeiterfassung"
+    [ -z "${BACKUP_KEEP:-}" ] && BACKUP_KEEP=7
+    [ -z "${DOCKER_SUBNET:-}" ] && DOCKER_SUBNET="172.20.0.0/16"
 }
 
+# ─── App-Verzeichnis erkennen ────────────────────────────────────
+detect_app_dir() {
+    local base="$1"
+    if [ -d "${base}/app/.git" ]; then
+        echo "${base}/app"
+    elif [ -d "${base}/production/.git" ]; then
+        echo "${base}/production"
+    elif [ -d "${base}/app" ]; then
+        echo "${base}/app"
+    elif [ -d "${base}/production" ]; then
+        echo "${base}/production"
+    else
+        echo "${base}/app"
+    fi
+}
 
 # ═════════════════════════════════════════════════════════════════
 # VORAUSSETZUNGEN
 # ═════════════════════════════════════════════════════════════════
 
 check_prerequisites() {
-    header "Voraussetzungen pruefen"
+    header "Voraussetzungen prüfen"
 
     local ok=true
 
@@ -264,9 +289,9 @@ check_prerequisites() {
     fi
 
     if docker info >/dev/null 2>&1; then
-        log "Docker Daemon laeuft"
+        log "Docker Daemon läuft"
     else
-        err "Docker Daemon laeuft nicht oder keine Berechtigung"
+        err "Docker Daemon läuft nicht oder keine Berechtigung"
         err "  Starten: sudo systemctl start docker"
         err "  Benutzer zur docker-Gruppe: sudo usermod -aG docker \$(whoami)"
         ok=false
@@ -275,17 +300,16 @@ check_prerequisites() {
     local compose_cmd
     compose_cmd=$(detect_compose)
     if [ -n "$compose_cmd" ]; then
-        log "Docker Compose verfuegbar ($compose_cmd)"
+        log "Docker Compose verfügbar ($compose_cmd)"
     else
         err "Docker Compose nicht gefunden"
-        err "  Installation: sudo apt-get install docker-compose-plugin"
         ok=false
     fi
 
     if command -v openssl >/dev/null 2>&1; then
-        log "OpenSSL verfuegbar"
+        log "OpenSSL verfügbar"
     else
-        err "OpenSSL nicht installiert (wird fuer Schluessel-Generierung benoetigt)"
+        err "OpenSSL nicht installiert (wird für Schlüssel-Generierung benötigt)"
         err "  Installation: sudo apt install openssl"
         ok=false
     fi
@@ -299,19 +323,20 @@ check_prerequisites() {
     fi
 
     if command -v nginx >/dev/null 2>&1; then
-        log "Nginx verfuegbar"
+        log "Nginx verfügbar"
     else
-        warn "Nginx nicht gefunden (wird am Ende erklaert)"
+        warn "Nginx nicht gefunden (wird am Ende erklärt)"
     fi
 
+    # sudo-Zugriff prüfen
     if sudo -n true 2>/dev/null; then
-        log "sudo-Zugriff verfuegbar"
+        log "sudo-Zugriff verfügbar"
     else
-        info "sudo-Zugriff wird fuer einige Schritte benoetigt (Verzeichnisse, Nginx)."
+        info "sudo-Zugriff wird für einige Schritte benötigt (Verzeichnisse, Nginx)."
         if ! sudo -v 2>/dev/null; then
-            warn "sudo nicht verfuegbar -- einige Schritte muessen manuell ausgefuehrt werden"
+            warn "sudo nicht verfügbar -- einige Schritte müssen manuell ausgeführt werden"
         else
-            log "sudo-Zugriff bestaetigt"
+            log "sudo-Zugriff bestätigt"
         fi
     fi
 
@@ -361,15 +386,15 @@ collect_config() {
         source "$prev_config"
         migrate_old_config_vars
         echo -e "  ${GREEN}✓${NC} Vorherige Konfiguration geladen: $prev_config"
-        echo -e "  ${DIM}Druecke Enter um den bisherigen Wert zu uebernehmen.${NC}"
+        echo -e "  ${DIM}Drücke Enter um den bisherigen Wert zu übernehmen.${NC}"
         echo ""
     fi
 
     # ── 1/5: Installation ─────────────────────────────────────────
     header "Schritt 1/5 -- Installation"
 
-    echo -e "  ${DIM}Der Instanz-Name wird als Container-Prefix und Nginx-Dateiname verwendet.${NC}"
-    echo -e "  ${DIM}Typische Namen: ameise-production, ameise-staging${NC}"
+    echo "  ${DIM}Der Instanz-Name wird als Verzeichnisname und Container-Prefix verwendet.${NC}"
+    echo "  ${DIM}Typische Namen: ameise-production, ameise-staging${NC}"
     echo ""
     INSTANCE_NAME=$(ask "Instanz-Name" "${INSTANCE_NAME:-ameise-production}")
 
@@ -388,16 +413,20 @@ collect_config() {
 
     echo "  Protokoll:"
     echo "    1) HTTP   (internes Netz / Entwicklung -- IP-Adresse reicht)"
-    echo "    2) HTTPS  (Produktion -- Domain-Name noetig fuer SSL-Zertifikat)"
+    echo "    2) HTTPS  (Produktion -- Domain-Name nötig für SSL-Zertifikat)"
     echo ""
 
     local default_proto_choice="2"
-    [ "${PROTOCOL:-}" = "http" ] && default_proto_choice="1"
+    if [ "${PROTOCOL:-}" = "http" ]; then
+        default_proto_choice="1"
+    fi
 
     local proto_choice
     proto_choice=$(ask "Auswahl" "$default_proto_choice")
     PROTOCOL="https"
-    [ "$proto_choice" = "1" ] && PROTOCOL="http"
+    if [ "$proto_choice" = "1" ]; then
+        PROTOCOL="http"
+    fi
     echo ""
 
     local default_host="${APP_HOSTNAME:-}"
@@ -407,14 +436,18 @@ collect_config() {
 
     if [ "$PROTOCOL" = "https" ]; then
         echo -e "  ${BOLD}Domain-Name eingeben${NC} (z.B. zeiterfassung.masitcon.de)"
-        echo -e "  ${DIM}SSL-Zertifikat wird nach der Installation per Certbot eingerichtet (Anleitung am Ende).${NC}"
+        echo -e "  ${DIM}Dieser Name erscheint in der Browser-URL: https://zeiterfassung.masitcon.de${NC}"
+        echo -e "  ${DIM}DNS muss auf die IP dieses Servers zeigen. SSL-Zertifikat wird${NC}"
+        echo -e "  ${DIM}nach der Installation per Certbot eingerichtet (Anleitung am Ende).${NC}"
         echo ""
         APP_HOSTNAME=$(ask "Domain-Name" "$default_host")
 
+        # Warnung bei IP-Adresse statt Domain
         if [[ "$APP_HOSTNAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo ""
             warn "Du hast eine IP-Adresse eingegeben ($APP_HOSTNAME)."
-            warn "HTTPS braucht einen Domain-Namen fuer das SSL-Zertifikat!"
+            warn "HTTPS braucht einen Domain-Namen für das SSL-Zertifikat!"
+            warn "Certbot kann kein Zertifikat für eine IP ausstellen."
             echo ""
             if confirm "Trotzdem mit IP weitermachen? (HTTPS wird nicht funktionieren)" "n"; then
                 warn "OK -- du musst SSL selbst konfigurieren."
@@ -424,6 +457,8 @@ collect_config() {
         fi
     else
         echo -e "  ${BOLD}Hostname oder IP-Adresse eingeben${NC}"
+        echo -e "  ${DIM}Unter dieser Adresse ist die App im Browser erreichbar: http://...${NC}"
+        echo ""
         APP_HOSTNAME=$(ask "Hostname / IP" "$default_host")
     fi
 
@@ -447,17 +482,27 @@ collect_config() {
         default_studio="${STUDIO_PORT:-3110}"
     fi
 
+    # Auto-detect freie Ports wenn Defaults belegt
     if ! $has_prev_config; then
-        is_port_free "$default_app"    || default_app=$(find_free_port "$default_app")    || default_app=3000
-        is_port_free "$default_api"    || default_api=$(find_free_port "$default_api")    || default_api=8000
-        is_port_free "$default_db"     || default_db=$(find_free_port "$default_db")      || default_db=5432
-        is_port_free "$default_studio" || default_studio=$(find_free_port "$default_studio") || default_studio=3100
+        if ! is_port_free "$default_app"; then
+            default_app=$(find_free_port "$default_app") || default_app=3000
+        fi
+        if ! is_port_free "$default_api"; then
+            default_api=$(find_free_port "$default_api") || default_api=8000
+        fi
+        if ! is_port_free "$default_db"; then
+            default_db=$(find_free_port "$default_db") || default_db=5432
+        fi
+        if ! is_port_free "$default_studio"; then
+            default_studio=$(find_free_port "$default_studio") || default_studio=3100
+        fi
     fi
 
+    local port_label
     for port_info in "APP_PORT:App (Next.js):$default_app" "API_PORT:API (Supabase):$default_api" "DB_PORT:Datenbank:$default_db" "STUDIO_PORT:Studio:$default_studio"; do
         local var_name="${port_info%%:*}"
         local rest="${port_info#*:}"
-        local port_label="${rest%%:*}"
+        port_label="${rest%%:*}"
         local port_default="${rest##*:}"
 
         local port_val
@@ -473,10 +518,11 @@ collect_config() {
                 echo -e "    ${GREEN}→${NC} Verwende Port $alt stattdessen"
                 port_val="$alt"
             else
-                warn "Kein freier Port gefunden! Bitte manuell waehlen."
+                warn "Kein freier Port gefunden! Bitte manuell wählen."
                 port_val=$(ask "$port_label (manuell)" "$port_val")
             fi
         fi
+
         eval "${var_name}=\"$port_val\""
     done
 
@@ -492,7 +538,7 @@ collect_config() {
     # ── 4/5: E-Mail (SMTP) ────────────────────────────────────────
     header "Schritt 4/5 -- E-Mail (SMTP)"
 
-    echo "  ${DIM}Fuer Passwort-Reset und Einladungs-E-Mails.${NC}"
+    echo "  ${DIM}Für Passwort-Reset und Einladungs-E-Mails.${NC}"
     echo -e "  ${DIM}Port 587 (STARTTLS) verwenden -- Port 465 (SMTPS) funktioniert nicht aus Docker.${NC}"
     echo ""
 
@@ -506,34 +552,49 @@ collect_config() {
     fi
     local new_smtp_pass
     new_smtp_pass=$(ask_secret "SMTP-Passwort${prev_smtp_hint}")
-    if [ -n "$new_smtp_pass" ]; then SMTP_PASS="$new_smtp_pass"; fi
+    if [ -n "$new_smtp_pass" ]; then
+        SMTP_PASS="$new_smtp_pass"
+    fi
     echo ""
     SMTP_ADMIN_EMAIL=$(ask "Absender-E-Mail" "${SMTP_ADMIN_EMAIL:-$SMTP_USER}")
     SMTP_SENDER_NAME=$(ask "Absendername" "${SMTP_SENDER_NAME:-Ameise Zeiterfassung}")
     echo ""
 
-    if [ -z "${SMTP_PASS:-}" ]; then
+    if [ -z "$SMTP_PASS" ]; then
         warn "Kein SMTP-Passwort angegeben. E-Mail-Versand wird nicht funktionieren."
     else
         if confirm "SMTP-Verbindung jetzt testen?" "j"; then
             echo ""
             info "Teste Verbindung zu ${SMTP_HOST}:${SMTP_PORT}..."
-            local smtp_ok=false
+
+            local smtp_test_ok=false
+
             if command -v openssl >/dev/null 2>&1; then
-                local openssl_out
+                local openssl_result
                 if [ "$SMTP_PORT" = "465" ]; then
-                    openssl_out=$(echo "QUIT" | timeout 8 openssl s_client \
-                        -connect "${SMTP_HOST}:${SMTP_PORT}" -quiet 2>&1 || true)
+                    openssl_result=$(echo "QUIT" | timeout 8 openssl s_client \
+                        -connect "${SMTP_HOST}:${SMTP_PORT}" \
+                        -quiet 2>&1 || true)
                 else
-                    openssl_out=$(echo "QUIT" | timeout 8 openssl s_client \
-                        -connect "${SMTP_HOST}:${SMTP_PORT}" -starttls smtp -quiet 2>&1 || true)
+                    openssl_result=$(echo "QUIT" | timeout 8 openssl s_client \
+                        -connect "${SMTP_HOST}:${SMTP_PORT}" \
+                        -starttls smtp -quiet 2>&1 || true)
                 fi
-                echo "$openssl_out" | grep -qi "220\|250\|ok\|connected" && smtp_ok=true
+
+                if echo "$openssl_result" | grep -qi "220\|250\|ok\|connected"; then
+                    log "Verbindung zu ${SMTP_HOST}:${SMTP_PORT} erfolgreich"
+                    smtp_test_ok=true
+                else
+                    err "Verbindung fehlgeschlagen"
+                fi
             fi
-            if $smtp_ok; then
-                log "Verbindung zu ${SMTP_HOST}:${SMTP_PORT} erfolgreich"
-            else
-                warn "SMTP-Test fehlgeschlagen. Moegliche Ursachen: falscher Host/Port, Firewall."
+
+            if ! $smtp_test_ok; then
+                echo ""
+                warn "SMTP-Test fehlgeschlagen. Mögliche Ursachen:"
+                warn "  - Falscher Host/Port"
+                warn "  - Firewall blockiert ausgehende Verbindung"
+                echo ""
                 if ! confirm "Trotzdem mit diesen SMTP-Daten weitermachen?" "j"; then
                     SMTP_HOST=$(ask "SMTP-Host" "$SMTP_HOST")
                     SMTP_PORT=$(ask "SMTP-Port" "$SMTP_PORT")
@@ -550,7 +611,7 @@ collect_config() {
     header "Schritt 5/5 -- App-Konfiguration"
 
     echo -e "  ${BOLD}Datentransfer-Passwort:${NC}"
-    echo "  ${DIM}Passwort fuer die geschuetzte Datentransfer-API-Route.${NC}"
+    echo "  ${DIM}Passwort für die geschützte Datentransfer-API-Route.${NC}"
     echo "  ${DIM}Wird automatisch generiert wenn leer gelassen.${NC}"
     echo ""
 
@@ -569,7 +630,6 @@ collect_config() {
     echo ""
 }
 
-
 # ═════════════════════════════════════════════════════════════════
 # ZUSAMMENFASSUNG
 # ═════════════════════════════════════════════════════════════════
@@ -583,10 +643,10 @@ show_summary() {
     printf "  %-24s %s\n" "Docker-Subnet:" "$DOCKER_SUBNET"
     echo ""
     echo -e "  ${BOLD}Ports (alle auf 127.0.0.1, nur via Nginx erreichbar):${NC}"
-    printf "    %-22s %s\n" "App (Next.js):"       "Port ${APP_PORT}"
+    printf "    %-22s %s\n" "App (Next.js):" "Port ${APP_PORT}"
     printf "    %-22s %s\n" "API (Supabase Kong):" "Port ${API_PORT}"
     printf "    %-22s %s\n" "Datenbank (Postgres):" "Port ${DB_PORT}"
-    printf "    %-22s %s\n" "Studio:"              "Port ${STUDIO_PORT} (SSH-Tunnel)"
+    printf "    %-22s %s\n" "Studio:" "Port ${STUDIO_PORT} (SSH-Tunnel)"
     echo ""
     printf "  %-24s %s\n" "SMTP:" "${SMTP_HOST}:${SMTP_PORT}"
     echo ""
@@ -598,40 +658,54 @@ show_summary() {
 
 generate_secrets() {
     if [ -n "${JWT_SECRET:-}" ] && [ -n "${POSTGRES_PASSWORD:-}" ] && \
-       [ -n "${ANON_KEY:-}" ]   && [ -n "${SERVICE_ROLE_KEY:-}" ]; then
-        log "Secrets bereits vorhanden -- unveraendert."
+       [ -n "${ANON_KEY:-}" ] && [ -n "${SERVICE_ROLE_KEY:-}" ]; then
+        log "Secrets bereits vorhanden -- unverändert."
+        return 0
+    fi
+
+    info "Generiere Secrets..."
+
+    if [ -z "${JWT_SECRET:-}" ]; then
+        JWT_SECRET=$(openssl rand -hex 40)
+        POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/\n' | head -c 32)
+
+        local iat exp hdr pld sig
+        iat=$(date +%s); exp=4102444800
+        hdr=$(printf '{"alg":"HS256","typ":"JWT"}' | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+
+        pld=$(printf '{"role":"anon","iss":"supabase","iat":%d,"exp":%d}' "$iat" "$exp" | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+        sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+        ANON_KEY="${hdr}.${pld}.${sig}"
+
+        pld=$(printf '{"role":"service_role","iss":"supabase","iat":%d,"exp":%d}' "$iat" "$exp" | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+        sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+        SERVICE_ROLE_KEY="${hdr}.${pld}.${sig}"
+
+        log "Alle Secrets generiert."
     else
-        info "Generiere Secrets..."
-
-        if [ -z "${JWT_SECRET:-}" ]; then
-            JWT_SECRET=$(openssl rand -hex 40)
+        if [ -z "${POSTGRES_PASSWORD:-}" ]; then
             POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/\n' | head -c 32)
-
+        fi
+        if [ -z "${ANON_KEY:-}" ]; then
             local iat exp hdr pld sig
             iat=$(date +%s); exp=4102444800
             hdr=$(printf '{"alg":"HS256","typ":"JWT"}' | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
-
-            pld=$(printf '{"role":"anon","iss":"supabase","iat":%d,"exp":%d}' "$iat" "$exp" \
-                | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
-            sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary \
-                | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+            pld=$(printf '{"role":"anon","iss":"supabase","iat":%d,"exp":%d}' "$iat" "$exp" | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+            sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
             ANON_KEY="${hdr}.${pld}.${sig}"
-
-            pld=$(printf '{"role":"service_role","iss":"supabase","iat":%d,"exp":%d}' "$iat" "$exp" \
-                | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
-            sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary \
-                | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
-            SERVICE_ROLE_KEY="${hdr}.${pld}.${sig}"
-
-            log "Alle Secrets generiert."
-        else
-            [ -z "${POSTGRES_PASSWORD:-}" ] && \
-                POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/\n' | head -c 32)
-            log "Fehlende Secrets ergaenzt."
         fi
+        if [ -z "${SERVICE_ROLE_KEY:-}" ]; then
+            local iat exp hdr pld sig
+            iat=$(date +%s); exp=4102444800
+            hdr=$(printf '{"alg":"HS256","typ":"JWT"}' | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+            pld=$(printf '{"role":"service_role","iss":"supabase","iat":%d,"exp":%d}' "$iat" "$exp" | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+            sig=$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | openssl base64 -e -A | tr '+/' '-_' | tr -d '=')
+            SERVICE_ROLE_KEY="${hdr}.${pld}.${sig}"
+        fi
+        log "Fehlende Secrets ergänzt."
     fi
 
-    # PG_META_CRYPTO_KEY nur generieren wenn nicht bereits vorhanden (aus config.env)
+    # PG_META_CRYPTO_KEY nur generieren wenn nicht bereits vorhanden
     if [ -z "${PG_META_CRYPTO_KEY:-}" ]; then
         PG_META_CRYPTO_KEY=$(openssl rand -hex 32)
         log "PG_META_CRYPTO_KEY generiert."
@@ -679,16 +753,16 @@ save_config() {
         echo "SMTP_HOST=\"$SMTP_HOST\""
         echo "SMTP_PORT=\"$SMTP_PORT\""
         echo "SMTP_USER=\"$SMTP_USER\""
-        printf "SMTP_PASS=%s\n" "$(_safe_val "${SMTP_PASS:-}")"
+        printf "SMTP_PASS=%s\n" "$(_safe_val "$SMTP_PASS")"
         echo "SMTP_ADMIN_EMAIL=\"$SMTP_ADMIN_EMAIL\""
         echo "SMTP_SENDER_NAME=\"$SMTP_SENDER_NAME\""
         echo ""
-        printf "DATA_TRANSFER_PASSWORD=%s\n" "$(_safe_val "${DATA_TRANSFER_PASSWORD:-}")"
+        printf "DATA_TRANSFER_PASSWORD=%s\n" "$(_safe_val "$DATA_TRANSFER_PASSWORD")"
         echo ""
         echo "BACKUP_DIR=\"${BACKUP_DIR:-${BASE_DIR}/backups}\""
         echo "BACKUP_KEEP=\"${BACKUP_KEEP:-7}\""
         echo ""
-        echo "# Secrets (automatisch generiert -- NICHT AENDERN!)"
+        echo "# Secrets (automatisch generiert -- NICHT ÄNDERN!)"
         echo "JWT_SECRET=\"$JWT_SECRET\""
         echo "POSTGRES_PASSWORD=\"$POSTGRES_PASSWORD\""
         echo "ANON_KEY=\"$ANON_KEY\""
@@ -715,7 +789,7 @@ generate_docker_env() {
 # Ameise Zeiterfassung - Docker Compose Environment
 # Instanz  : ${INSTANCE_NAME}
 # Generiert: $(date +%Y-%m-%d) von server-setup.sh
-# ACHTUNG  : Enthaelt Secrets! Niemals committen.
+# ACHTUNG  : Enthält Secrets! Niemals committen.
 # ═══════════════════════════════════════════════════════════════
 
 # Stack
@@ -751,6 +825,8 @@ DISABLE_SIGNUP=true
 ENABLE_EMAIL_SIGNUP=true
 ENABLE_EMAIL_AUTOCONFIRM=false
 ENABLE_ANONYMOUS_USERS=false
+ENABLE_PHONE_SIGNUP=false
+ENABLE_PHONE_AUTOCONFIRM=false
 
 # SMTP
 SMTP_HOST=${SMTP_HOST}
@@ -760,11 +836,23 @@ SMTP_PASS="${SMTP_PASS}"
 SMTP_ADMIN_EMAIL=${SMTP_ADMIN_EMAIL}
 SMTP_SENDER_NAME=${SMTP_SENDER_NAME}
 
+# Mailer (App Router: /auth/confirm statt /auth/v1/verify)
+MAILER_URLPATHS_INVITE=/auth/confirm
+MAILER_URLPATHS_CONFIRMATION=/auth/confirm
+MAILER_URLPATHS_RECOVERY=/auth/confirm
+MAILER_URLPATHS_EMAIL_CHANGE=/auth/confirm
+
+# PKCE Flow State (24h für E-Mail-Bestätigungs-Links)
+FLOW_STATE_EXPIRY_DURATION=86400
+
 # PostgREST
 PGRST_DB_SCHEMAS=public,storage
 
 # Next.js (NEXT_PUBLIC_SUPABASE_URL wird zur BUILD-ZEIT eingebettet)
 NEXT_PUBLIC_SUPABASE_URL=${supabase_url}
+
+# Interne Supabase-URL für Server-Side-Requests (kein TLS, kein DNS-Lookup)
+INTERNAL_SUPABASE_URL=http://127.0.0.1:${API_PORT}
 
 # App-Konfiguration
 DATA_TRANSFER_PASSWORD=${DATA_TRANSFER_PASSWORD}
@@ -777,59 +865,135 @@ EOF
     log "docker/.env generiert"
 }
 
-
 # ═════════════════════════════════════════════════════════════════
 # BESTEHENDE docker/.env AUTOMATISCH PATCHEN (idempotent)
 # ═════════════════════════════════════════════════════════════════
 
 apply_env_migrations() {
     local app_dir="$1"
+    local compose_cmd="${2:-}"
     local env_file="${app_dir}/docker/.env"
 
     if [ ! -f "$env_file" ]; then
-        warn "docker/.env nicht gefunden in $app_dir -- ueberspringe."
+        warn "docker/.env nicht gefunden in $app_dir -- überspringe."
         return
     fi
 
     local changed=false
 
+    # MAILER_URLPATHS: alte /auth/v1/verify → neue /auth/confirm (App Router)
+    if grep -q 'MAILER_URLPATHS.*=/auth/v1/verify' "$env_file" 2>/dev/null; then
+        sed -i 's|MAILER_URLPATHS_INVITE=/auth/v1/verify|MAILER_URLPATHS_INVITE=/auth/confirm|g' "$env_file"
+        sed -i 's|MAILER_URLPATHS_CONFIRMATION=/auth/v1/verify|MAILER_URLPATHS_CONFIRMATION=/auth/confirm|g' "$env_file"
+        sed -i 's|MAILER_URLPATHS_RECOVERY=/auth/v1/verify|MAILER_URLPATHS_RECOVERY=/auth/confirm|g' "$env_file"
+        sed -i 's|MAILER_URLPATHS_EMAIL_CHANGE=/auth/v1/verify|MAILER_URLPATHS_EMAIL_CHANGE=/auth/confirm|g' "$env_file"
+        log "MAILER_URLPATHS aktualisiert."
+        changed=true
+    fi
+
+    # MAILER_URLPATHS hinzufügen wenn komplett fehlend
+    if ! grep -q 'MAILER_URLPATHS_INVITE' "$env_file" 2>/dev/null; then
+        {
+            echo ""
+            echo "MAILER_URLPATHS_INVITE=/auth/confirm"
+            echo "MAILER_URLPATHS_CONFIRMATION=/auth/confirm"
+            echo "MAILER_URLPATHS_RECOVERY=/auth/confirm"
+            echo "MAILER_URLPATHS_EMAIL_CHANGE=/auth/confirm"
+        } >> "$env_file"
+        log "MAILER_URLPATHS ergänzt."
+        changed=true
+    fi
+
+    # FLOW_STATE_EXPIRY_DURATION (24h für E-Mail-Links)
+    if ! grep -q 'FLOW_STATE_EXPIRY_DURATION' "$env_file" 2>/dev/null; then
+        { echo ""; echo "FLOW_STATE_EXPIRY_DURATION=86400"; } >> "$env_file"
+        log "FLOW_STATE_EXPIRY_DURATION ergänzt."
+        changed=true
+    fi
+
+    # SITE_HOSTNAME aus SITE_URL ableiten
     if ! grep -q 'SITE_HOSTNAME' "$env_file" 2>/dev/null; then
         local site_url_val site_hostname
         site_url_val=$(grep '^SITE_URL=' "$env_file" | cut -d= -f2-)
         if [ -n "$site_url_val" ]; then
             site_hostname=$(echo "$site_url_val" | sed 's|https\?://||' | sed 's|/.*||' | sed 's|:.*||')
             sed -i "/^SITE_URL=/a SITE_HOSTNAME=${site_hostname}" "$env_file"
-            log "SITE_HOSTNAME ergaenzt."
+            log "SITE_HOSTNAME ergänzt."
             changed=true
         fi
     fi
 
+    # PG_META_CRYPTO_KEY
     if ! grep -q 'PG_META_CRYPTO_KEY' "$env_file" 2>/dev/null; then
-        local pg_meta_key
+        local pg_meta_key curr_project_id
         pg_meta_key=$(openssl rand -hex 32)
-        { echo ""; echo "PG_META_CRYPTO_KEY=${pg_meta_key}"; } >> "$env_file"
-        log "PG_META_CRYPTO_KEY ergaenzt."
+        curr_project_id=$(grep '^COMPOSE_PROJECT_NAME=' "$env_file" 2>/dev/null | cut -d= -f2)
+        { echo ""; echo "PG_META_CRYPTO_KEY=${pg_meta_key}"; echo "STUDIO_DEFAULT_ORGANIZATION=Masitcon"; echo "STUDIO_DEFAULT_PROJECT=${curr_project_id:-Ameise}"; } >> "$env_file"
+        log "PG_META_CRYPTO_KEY ergänzt."
         changed=true
     fi
 
+    # STUDIO_PORT
+    if ! grep -q 'STUDIO_PORT' "$env_file" 2>/dev/null; then
+        local curr_app_port
+        curr_app_port=$(grep '^APP_PORT=' "$env_file" | cut -d= -f2)
+        sed -i "/^APP_PORT=/a STUDIO_PORT=$(( ${curr_app_port:-3000} + 100 ))" "$env_file"
+        log "STUDIO_PORT ergänzt."
+        changed=true
+    fi
+
+    # DATA_TRANSFER_PASSWORD
     if ! grep -q 'DATA_TRANSFER_PASSWORD' "$env_file" 2>/dev/null; then
         local dt_pass
         dt_pass=$(openssl rand -base64 24 | tr -d '=+/\n' | head -c 24)
         { echo ""; echo "DATA_TRANSFER_PASSWORD=${dt_pass}"; } >> "$env_file"
-        log "DATA_TRANSFER_PASSWORD ergaenzt."
+        log "DATA_TRANSFER_PASSWORD ergänzt."
         changed=true
     fi
 
+    # DOCKER_SUBNET
     if ! grep -q 'DOCKER_SUBNET' "$env_file" 2>/dev/null; then
         { echo ""; echo "DOCKER_SUBNET=172.20.0.0/16"; } >> "$env_file"
-        log "DOCKER_SUBNET ergaenzt."
+        log "DOCKER_SUBNET ergänzt."
         changed=true
     fi
 
-    if $changed; then
+    # INTERNAL_SUPABASE_URL
+    if ! grep -q 'INTERNAL_SUPABASE_URL' "$env_file" 2>/dev/null; then
+        local api_port_val
+        api_port_val=$(grep '^API_PORT=' "$env_file" | cut -d= -f2)
+        if [ -n "$api_port_val" ]; then
+            { echo ""; echo "INTERNAL_SUPABASE_URL=http://127.0.0.1:${api_port_val}"; } >> "$env_file"
+            log "INTERNAL_SUPABASE_URL ergänzt."
+            changed=true
+        fi
+    fi
+
+    # Doppelte STUDIO_PORT bereinigen
+    local duplicates
+    duplicates=$(grep -c '^STUDIO_PORT=' "$env_file" 2>/dev/null || echo "0")
+    if [ "$duplicates" -gt 1 ]; then
+        local first_val
+        first_val=$(grep '^STUDIO_PORT=' "$env_file" | head -1 | cut -d= -f2)
+        sed -i '/^STUDIO_PORT=/d' "$env_file"
+        echo "STUDIO_PORT=${first_val}" >> "$env_file"
+        changed=true
+    fi
+
+    if [ "$changed" = true ]; then
         log "docker/.env wurde aktualisiert."
     else
         info "docker/.env ist aktuell."
+    fi
+
+    # Passwort-Check wenn Stack läuft
+    if [ -n "$compose_cmd" ]; then
+        if ! check_db_password_sync "$app_dir" "$compose_cmd" 2>/dev/null; then
+            warn "DB-Passwort nicht synchron -- führe Sync durch..."
+            sync_db_passwords "$app_dir" "$compose_cmd" || true
+        else
+            info "DB-Passwörter sind synchron."
+        fi
     fi
 }
 
@@ -840,9 +1004,11 @@ apply_env_migrations() {
 apply_new_migrations() {
     local app_dir="$1"
     local compose_cmd="$2"
+
+    # supabase_admin über TCP (127.0.0.1 = trust in pg_hba.conf)
     local PSQL_CMD="psql -U supabase_admin -h 127.0.0.1 -d postgres"
 
-    info "Pruefe auf neue Migrationen..."
+    info "Prüfe auf neue Migrationen..."
     cd "$app_dir"
 
     $compose_cmd -f docker/docker-compose.yml exec -T db \
@@ -865,6 +1031,7 @@ apply_new_migrations() {
             "SELECT 1 FROM public._applied_migrations WHERE version = '$version'" 2>/dev/null || echo "")
 
         [ "$already" = "1" ] && continue
+
         new_count=$((new_count + 1))
         info "Wende Migration an: $version"
 
@@ -899,7 +1066,7 @@ sync_db_passwords() {
     local env_file="${app_dir}/docker/.env"
 
     if [ ! -f "$env_file" ]; then
-        warn "docker/.env nicht gefunden -- ueberspringe Passwort-Sync."
+        warn "docker/.env nicht gefunden -- überspringe Passwort-Sync."
         return 1
     fi
 
@@ -907,11 +1074,11 @@ sync_db_passwords() {
     pg_pass=$(grep '^POSTGRES_PASSWORD=' "$env_file" | cut -d= -f2-)
 
     if [ -z "$pg_pass" ]; then
-        warn "POSTGRES_PASSWORD nicht gefunden -- ueberspringe."
+        warn "POSTGRES_PASSWORD nicht gefunden -- überspringe."
         return 1
     fi
 
-    info "Synchronisiere DB-Passwoerter..."
+    info "Synchronisiere DB-Passwörter..."
 
     # Dollar-Quoting ($pwd$...$pwd$) statt einfache Quotes -- sicher bei Sonderzeichen im Passwort
     local sql
@@ -921,10 +1088,11 @@ sync_db_passwords() {
          ALTER USER supabase_functions_admin WITH PASSWORD \$pwd\$${pg_pass}\$pwd\$;
          ALTER USER pgbouncer                WITH PASSWORD \$pwd\$${pg_pass}\$pwd\$;"
 
+    # -h 127.0.0.1: TCP statt Unix-Socket → pg_hba.conf "trust" greift
     local output
     if output=$($compose_cmd -f docker/docker-compose.yml exec -T db \
             psql -U supabase_admin -h 127.0.0.1 -c "$sql" 2>&1); then
-        log "DB-Passwoerter synchronisiert."
+        log "DB-Passwörter synchronisiert."
         return 0
     else
         warn "Passwort-Sync: $output"
@@ -942,41 +1110,12 @@ check_db_password_sync() {
     db_name=$(grep '^POSTGRES_DB=' "$env_file" | cut -d= -f2- 2>/dev/null || echo "postgres")
     db_name="${db_name:-postgres}"
 
+    # TCP-Verbindung (127.0.0.1) mit explizitem Passwort testen
     $compose_cmd -f docker/docker-compose.yml exec -T \
         -e PGPASSWORD="${pg_pass}" db \
         psql -U supabase_auth_admin -h 127.0.0.1 -d "${db_name}" \
         -c "SELECT 1" > /dev/null 2>&1
 }
-
-# ═════════════════════════════════════════════════════════════════
-# PORT-CHECK VOR DOCKER-START
-# ═════════════════════════════════════════════════════════════════
-
-preflight_port_check() {
-    local ok=true
-
-    echo -e "  ${BOLD}Port-Check:${NC}"
-    for port_info in "${APP_PORT}:App" "${API_PORT}:API" "${DB_PORT}:Datenbank" "${STUDIO_PORT}:Studio"; do
-        local port="${port_info%%:*}"
-        local label="${port_info##*:}"
-        printf "    %-20s Port %-6s" "$label" "$port"
-        if is_port_free "$port"; then
-            echo -e "  ${GREEN}frei${NC}"
-        else
-            echo -e "  ${RED}BELEGT!${NC}"
-            ok=false
-        fi
-    done
-
-    if ! $ok; then
-        echo ""
-        err "Belegte Ports gefunden! Docker-Stack kann nicht starten."
-        err "Bitte Ports aendern: bash scripts/server-setup.sh --reconfigure"
-        return 1
-    fi
-    return 0
-}
-
 
 # ═════════════════════════════════════════════════════════════════
 # NGINX
@@ -989,7 +1128,7 @@ generate_nginx_conf() {
 # Masitcon Ameise (Zeiterfassung) - Nginx Reverse Proxy (${INSTANCE_NAME:-ameise-production})
 # Generiert von server-setup.sh
 #
-# HTTPS nachruesten:
+# HTTPS nachrüsten:
 #   sudo apt install certbot python3-certbot-nginx
 #   sudo certbot --nginx -d ${APP_HOSTNAME}
 
@@ -1029,15 +1168,60 @@ CONF
     log "Nginx-Config generiert: $file"
 }
 
-show_nginx_manual_steps() {
-    local nginx_file="$1"
+install_nginx_conf() {
+    local src_file="$1"
     local name="${INSTANCE_NAME:-ameise-production}"
-    echo ""
-    echo -e "  ${BOLD}Nginx-Config manuell aktivieren:${NC}"
-    echo "     sudo cp ${nginx_file} /etc/nginx/sites-available/${name}.conf"
-    echo "     sudo ln -sf /etc/nginx/sites-available/${name}.conf /etc/nginx/sites-enabled/${name}.conf"
-    echo "     sudo nginx -t && sudo systemctl reload nginx"
-    echo ""
+    local dest="/etc/nginx/sites-available/${name}.conf"
+    local link="/etc/nginx/sites-enabled/${name}.conf"
+
+    if ! command -v nginx >/dev/null 2>&1; then
+        return 1
+    fi
+
+    if ! sudo cp "$src_file" "$dest" 2>/dev/null; then
+        err "Konnte Nginx-Config nicht kopieren: $src_file → $dest"
+        return 1
+    fi
+
+    sudo ln -sf "$dest" "$link" 2>/dev/null || true
+
+    if sudo nginx -t >/dev/null 2>&1; then
+        sudo systemctl reload nginx >/dev/null 2>&1 || sudo service nginx reload >/dev/null 2>&1 || true
+        log "Nginx-Config aktiviert: $dest"
+        return 0
+    else
+        err "nginx -t fehlgeschlagen! Config prüfen: sudo nginx -t"
+        return 1
+    fi
+}
+
+# ═════════════════════════════════════════════════════════════════
+# PORT-CHECK VOR DOCKER-START
+# ═════════════════════════════════════════════════════════════════
+
+preflight_port_check() {
+    local ok=true
+
+    echo -e "  ${BOLD}Port-Check:${NC}"
+    for port_info in "${APP_PORT}:App" "${API_PORT}:API" "${DB_PORT}:Datenbank" "${STUDIO_PORT}:Studio"; do
+        local port="${port_info%%:*}"
+        local label="${port_info##*:}"
+        printf "    %-20s Port %-6s" "$label" "$port"
+        if is_port_free "$port"; then
+            echo -e "  ${GREEN}frei${NC}"
+        else
+            echo -e "  ${RED}BELEGT!${NC}"
+            ok=false
+        fi
+    done
+
+    if ! $ok; then
+        echo ""
+        err "Belegte Ports gefunden! Docker-Stack kann nicht starten."
+        err "Bitte Ports ändern: bash scripts/server-setup.sh --reconfigure"
+        return 1
+    fi
+    return 0
 }
 
 # ═════════════════════════════════════════════════════════════════
@@ -1049,22 +1233,29 @@ do_install() {
     local total_steps=7
     local step=0
 
-    # [1/7] Verzeichnis anlegen
+    # ── [1/7] Verzeichnis anlegen ─────────────────────────────────
     step=$((step + 1))
     echo -e "  ${BOLD}[${step}/${total_steps}] Verzeichnis anlegen...${NC}"
-    local cur_uid cur_gid
-    cur_uid=$(id -u); cur_gid=$(id -g)
-    mkdir -p "$app_dir" 2>/dev/null || sudo mkdir -p "$app_dir" 2>/dev/null || true
-    sudo chown "${cur_uid}:${cur_gid}" "$BASE_DIR" "$app_dir" 2>/dev/null || true
+    if ! mkdir -p "$app_dir" 2>/dev/null; then
+        info "Benötige sudo für $app_dir..."
+        if sudo mkdir -p "$app_dir" && sudo chown "$(whoami):$(id -gn)" "$BASE_DIR" "$app_dir"; then
+            log "Verzeichnis angelegt: $app_dir"
+        else
+            err "Verzeichnis konnte nicht angelegt werden: $app_dir"
+            err "Bitte manuell: sudo mkdir -p $app_dir && sudo chown \$(whoami):\$(id -gn) $app_dir"
+            return 1
+        fi
+    else
+        log "Verzeichnis OK"
+    fi
 
     if [ ! -w "$app_dir" ]; then
         err "Verzeichnis nicht beschreibbar: $app_dir"
-        err "  Bitte manuell: sudo chown $(id -u):$(id -g) $BASE_DIR $app_dir"
+        err "  Bitte manuell: sudo chown $(whoami):$(id -gn) $BASE_DIR $app_dir"
         return 1
     fi
-    log "Verzeichnis OK"
 
-    # [2/7] Repository klonen
+    # ── [2/7] Repository klonen ───────────────────────────────────
     step=$((step + 1))
     echo -e "  ${BOLD}[${step}/${total_steps}] Repository klonen...${NC}"
     if [ -d "$app_dir/.git" ]; then
@@ -1072,20 +1263,20 @@ do_install() {
         cd "$app_dir"
         git pull origin "$GIT_BRANCH" || {
             err "git pull fehlgeschlagen!"
-            err "  Loesung: cd $app_dir && git status"
+            err "  Lösung: cd $app_dir && git status"
             return 1
         }
     else
         git clone --branch "$GIT_BRANCH" "$GIT_REMOTE" "$app_dir" || {
             err "git clone fehlgeschlagen!"
-            err "  Pruefe: Git-URL und Branch korrekt? SSH-Key vorhanden?"
+            err "  Prüfe: Git-URL und Branch korrekt? SSH-Key vorhanden?"
             return 1
         }
     fi
     cd "$app_dir"
     log "Repository OK"
 
-    # [3/7] Secrets generieren
+    # ── [3/7] Secrets generieren ──────────────────────────────────
     step=$((step + 1))
     echo -e "  ${BOLD}[${step}/${total_steps}] Secrets generieren...${NC}"
     if ! generate_secrets; then
@@ -1093,16 +1284,19 @@ do_install() {
         return 1
     fi
 
-    # [4/7] Konfiguration schreiben
+    # ── [4/7] Konfiguration schreiben ─────────────────────────────
     step=$((step + 1))
     echo -e "  ${BOLD}[${step}/${total_steps}] Konfiguration schreiben...${NC}"
     save_config "${BASE_DIR}/config.env"
     generate_docker_env "${app_dir}/docker/.env"
 
-    # [5/7] Docker-Stack starten
+    # ── [5/7] Docker-Stack starten ────────────────────────────────
     step=$((step + 1))
     echo -e "  ${BOLD}[${step}/${total_steps}] Docker-Stack starten...${NC}"
-    if ! preflight_port_check; then return 1; fi
+
+    if ! preflight_port_check; then
+        return 1
+    fi
 
     local compose_cmd
     compose_cmd=$(detect_compose)
@@ -1113,9 +1307,9 @@ do_install() {
         echo ""
         err "Docker-Stack konnte nicht gestartet werden!"
         echo ""
-        echo "  Haeufige Ursachen:"
+        echo "  Häufige Ursachen:"
         echo "    - Port bereits belegt"
-        echo "    - Nicht genuegend Arbeitsspeicher"
+        echo "    - Nicht genügend Arbeitsspeicher"
         echo "    - Docker-Daemon nicht laufend"
         echo ""
         echo "  Debugging:"
@@ -1128,14 +1322,13 @@ do_install() {
     fi
     log "Docker-Stack gestartet"
 
-    # [6/7] Datenbank einrichten
+    # ── [6/7] Datenbank einrichten ────────────────────────────────
     step=$((step + 1))
     echo -e "  ${BOLD}[${step}/${total_steps}] Datenbank einrichten...${NC}"
 
     info "Warte auf Datenbank..."
     local db_retries=0
-    while ! $compose_cmd -f docker/docker-compose.yml exec -T db \
-            pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; do
+    while ! $compose_cmd -f docker/docker-compose.yml exec -T db pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; do
         db_retries=$((db_retries + 1))
         if [ "$db_retries" -gt 30 ]; then
             err "Datenbank nicht bereit nach 30 Sekunden!"
@@ -1148,7 +1341,7 @@ do_install() {
 
     sync_db_passwords "$app_dir" "$compose_cmd" || true
 
-    info "Starte Auth-abhaengige Services neu..."
+    info "Starte Auth-abhängige Services neu..."
     local project="${INSTANCE_NAME:-ameise-production}"
     docker restart "${project}-auth" "${project}-rest" "${project}-storage" >/dev/null 2>&1 || true
 
@@ -1161,25 +1354,32 @@ do_install() {
         sleep 1; auth_wait=$((auth_wait + 1)); echo -n "."
     done
     echo ""
-    if $auth_ok; then
-        log "Auth-Service laeuft"
+    if [ "$auth_ok" = true ]; then
+        log "Auth-Service läuft"
     else
-        warn "Auth-Service antwortet noch nicht -- pruefe mit: bash scripts/server-setup.sh --doctor"
+        warn "Auth-Service antwortet noch nicht -- prüfe mit: bash scripts/server-setup.sh --doctor"
     fi
 
     apply_new_migrations "$app_dir" "$compose_cmd"
 
-    # [7/7] Nginx-Konfiguration
+    # ── [7/7] Nginx-Konfiguration ─────────────────────────────────
     step=$((step + 1))
     echo -e "  ${BOLD}[${step}/${total_steps}] Nginx-Konfiguration...${NC}"
     local nginx_file="${BASE_DIR}/nginx-${INSTANCE_NAME}.conf"
     generate_nginx_conf "$nginx_file"
-    log "Nginx-Config generiert: $nginx_file"
-    info "Nginx wird NICHT automatisch konfiguriert -- manuelle Anleitung am Ende."
+
+    if command -v nginx >/dev/null 2>&1; then
+        if install_nginx_conf "$nginx_file"; then
+            log "Nginx-Config installiert und aktiviert"
+        else
+            warn "Nginx-Config konnte nicht automatisch installiert werden"
+        fi
+    else
+        warn "Nginx nicht installiert (wird am Ende erklärt)"
+    fi
 
     return 0
 }
-
 
 # ═════════════════════════════════════════════════════════════════
 # UPDATE
@@ -1211,6 +1411,7 @@ do_update() {
     local compose_cmd
     compose_cmd=$(detect_compose)
 
+    # Backup anbieten
     if confirm "Backup vor dem Update erstellen?" "j"; then
         do_backup
     fi
@@ -1218,16 +1419,23 @@ do_update() {
 
     cd "$app_dir"
 
+    # 1. Git update
     info "Aktualisiere Code (git pull)..."
     if ! git pull origin "$GIT_BRANCH"; then
         err "git pull fehlgeschlagen!"
-        err "  Pruefe: cd $app_dir && git status"
-        if ! confirm "Trotzdem weitermachen?" "n"; then exit 1; fi
+        err "  Prüfe: cd $app_dir && git status"
+        if ! confirm "Trotzdem weitermachen?" "n"; then
+            exit 1
+        fi
     fi
 
-    apply_env_migrations "$app_dir"
+    # 2. docker/.env patchen + Passwort-Check
+    apply_env_migrations "$app_dir" "$compose_cmd"
+
+    # 3. Migrationen anwenden
     apply_new_migrations "$app_dir" "$compose_cmd"
 
+    # 4. App-Container neu bauen
     info "Baue App-Container neu..."
     if ! $compose_cmd -f docker/docker-compose.yml up -d --build; then
         err "Docker-Build fehlgeschlagen!"
@@ -1240,10 +1448,12 @@ do_update() {
     local project="${INSTANCE_NAME:-ameise-production}"
     docker restart "${project}-auth" "${project}-rest" "${project}-storage" >/dev/null 2>&1 || true
 
-    # Nginx-Config regenerieren (nicht automatisch installieren)
+    # 5. Nginx regenerieren
     local nginx_file="${BASE_DIR}/nginx-${INSTANCE_NAME:-ameise-production}.conf"
     generate_nginx_conf "$nginx_file"
-    show_nginx_manual_steps "$nginx_file"
+    install_nginx_conf "$nginx_file" 2>/dev/null || true
+
+    echo ""
 }
 
 # ═════════════════════════════════════════════════════════════════
@@ -1278,7 +1488,7 @@ do_backup() {
     info "Backup-Verzeichnis: $backup_dir"
 
     if ! mkdir -p "$backup_dir" 2>/dev/null; then
-        sudo mkdir -p "$backup_dir" 2>/dev/null && sudo chown "$(id -u):$(id -g)" "$backup_dir" 2>/dev/null || true
+        sudo mkdir -p "$backup_dir" 2>/dev/null && sudo chown "$(whoami):$(id -gn)" "$backup_dir"
     fi
 
     local backup_ok=true
@@ -1299,7 +1509,7 @@ do_backup() {
                 backup_ok=false
             fi
         else
-            warn "DB-Container laeuft nicht -- ueberspringe Dump."
+            warn "DB-Container läuft nicht -- überspringe Dump."
         fi
 
         [ -f "docker/.env" ] && cp "docker/.env" "${backup_dir}/docker.env" && chmod 600 "${backup_dir}/docker.env"
@@ -1307,6 +1517,7 @@ do_backup() {
 
     [ -f "$config_file" ] && cp "$config_file" "${backup_dir}/config.env" && chmod 600 "${backup_dir}/config.env"
 
+    # Rotation
     local backup_count
     backup_count=$(find "$backup_base" -maxdepth 1 -mindepth 1 -type d -name "????-??-??_*" 2>/dev/null | wc -l)
     if [ "$backup_count" -gt "$backup_keep" ]; then
@@ -1323,7 +1534,6 @@ do_backup() {
     fi
     echo ""
 }
-
 
 # ═════════════════════════════════════════════════════════════════
 # DOCTOR (nur lesend)
@@ -1360,11 +1570,12 @@ do_doctor() {
 
     cd "$app_dir"
 
-    local site_hostname api_port smtp_host smtp_port
+    local site_hostname api_port smtp_host smtp_port flow_state
     site_hostname=$(grep '^SITE_HOSTNAME=' "$env_file" | cut -d= -f2-)
     api_port=$(grep '^API_PORT=' "$env_file" | cut -d= -f2-)
     smtp_host=$(grep '^SMTP_HOST=' "$env_file" | cut -d= -f2-)
     smtp_port=$(grep '^SMTP_PORT=' "$env_file" | cut -d= -f2-)
+    flow_state=$(grep '^FLOW_STATE_EXPIRY_DURATION=' "$env_file" | cut -d= -f2-)
 
     # Container-Check
     echo -e "  ${BOLD}Container:${NC}"
@@ -1382,10 +1593,10 @@ do_doctor() {
 
         if [ "$state" = "running" ]; then
             if [ "$health" = "unhealthy" ]; then
-                echo -e "  ${YELLOW}!${NC} ${cname} laeuft aber UNHEALTHY"
+                echo -e "  ${YELLOW}!${NC} ${cname} läuft aber UNHEALTHY"
                 all_ok=false
             else
-                echo -e "  ${GREEN}✓${NC} ${cname} laeuft${health:+ ($health)}"
+                echo -e "  ${GREEN}✓${NC} ${cname} läuft${health:+ ($health)}"
             fi
         else
             echo -e "  ${RED}✗${NC} ${cname} NICHT laufend ($state)"
@@ -1399,7 +1610,7 @@ do_doctor() {
     if check_db_password_sync "$app_dir" "$compose_cmd" 2>/dev/null; then
         echo -e "  ${GREEN}✓${NC} DB-Passwort synchron"
     else
-        echo -e "  ${RED}✗${NC} DB-Passwort STIMMT NICHT UEBEREIN"
+        echo -e "  ${RED}✗${NC} DB-Passwort STIMMT NICHT ÜBEREIN"
         echo -e "      → Fix: bash scripts/server-setup.sh --repair"
         all_ok=false
     fi
@@ -1407,29 +1618,27 @@ do_doctor() {
 
     # .env Pflichtfelder
     echo -e "  ${BOLD}Konfiguration:${NC}"
+
     local site_url_val
     site_url_val=$(grep '^SITE_URL=' "$env_file" | cut -d= -f2-)
-    [ -n "$site_url_val" ]   && echo -e "  ${GREEN}✓${NC} SITE_URL = ${site_url_val}" \
-        || { echo -e "  ${RED}✗${NC} SITE_URL FEHLT"; all_ok=false; }
-    [ -n "$site_hostname" ]  && echo -e "  ${GREEN}✓${NC} SITE_HOSTNAME = ${site_hostname}" \
-        || { echo -e "  ${YELLOW}!${NC} SITE_HOSTNAME fehlt"; all_ok=false; }
+    [ -n "$site_url_val" ] && echo -e "  ${GREEN}✓${NC} SITE_URL = ${site_url_val}" || { echo -e "  ${RED}✗${NC} SITE_URL FEHLT"; all_ok=false; }
+    [ -n "$site_hostname" ] && echo -e "  ${GREEN}✓${NC} SITE_HOSTNAME = ${site_hostname}" || { echo -e "  ${YELLOW}!${NC} SITE_HOSTNAME fehlt"; all_ok=false; }
+    [ -n "$flow_state" ] && echo -e "  ${GREEN}✓${NC} FLOW_STATE_EXPIRY_DURATION = ${flow_state}" || { echo -e "  ${YELLOW}!${NC} FLOW_STATE_EXPIRY_DURATION fehlt"; all_ok=false; }
 
     local dt_pass_val
     dt_pass_val=$(grep '^DATA_TRANSFER_PASSWORD=' "$env_file" | cut -d= -f2-)
-    [ -n "$dt_pass_val" ] && echo -e "  ${GREEN}✓${NC} DATA_TRANSFER_PASSWORD gesetzt" \
-        || { echo -e "  ${YELLOW}!${NC} DATA_TRANSFER_PASSWORD fehlt"; all_ok=false; }
+    [ -n "$dt_pass_val" ] && echo -e "  ${GREEN}✓${NC} DATA_TRANSFER_PASSWORD gesetzt" || { echo -e "  ${YELLOW}!${NC} DATA_TRANSFER_PASSWORD fehlt"; all_ok=false; }
 
     local docker_subnet_val
     docker_subnet_val=$(grep '^DOCKER_SUBNET=' "$env_file" | cut -d= -f2-)
-    [ -n "$docker_subnet_val" ] && echo -e "  ${GREEN}✓${NC} DOCKER_SUBNET = ${docker_subnet_val}" \
-        || { echo -e "  ${YELLOW}!${NC} DOCKER_SUBNET fehlt"; all_ok=false; }
+    [ -n "$docker_subnet_val" ] && echo -e "  ${GREEN}✓${NC} DOCKER_SUBNET = ${docker_subnet_val}" || { echo -e "  ${YELLOW}!${NC} DOCKER_SUBNET fehlt"; all_ok=false; }
     echo ""
 
     # Nginx
     echo -e "  ${BOLD}Nginx:${NC}"
     if command -v nginx &>/dev/null; then
         if sudo nginx -t >/dev/null 2>&1; then
-            echo -e "  ${GREEN}✓${NC} Nginx Config gueltig"
+            echo -e "  ${GREEN}✓${NC} Nginx Config gültig"
         else
             echo -e "  ${RED}✗${NC} Nginx Config FEHLERHAFT"
             all_ok=false
@@ -1439,13 +1648,13 @@ do_doctor() {
     fi
     echo ""
 
-    # DNS & Netzwerk
+    # DNS
     echo -e "  ${BOLD}DNS & Netzwerk:${NC}"
     if [ -n "$site_hostname" ]; then
         if getent hosts "$site_hostname" > /dev/null 2>&1; then
-            echo -e "  ${GREEN}✓${NC} DNS fuer ${site_hostname} OK"
+            echo -e "  ${GREEN}✓${NC} DNS für ${site_hostname} OK"
         else
-            echo -e "  ${YELLOW}!${NC} DNS fuer ${site_hostname} FEHLGESCHLAGEN"
+            echo -e "  ${YELLOW}!${NC} DNS für ${site_hostname} FEHLGESCHLAGEN"
             echo -e "      → Fix: echo \"127.0.0.1 ${site_hostname}\" | sudo tee -a /etc/hosts"
             all_ok=false
         fi
@@ -1503,15 +1712,15 @@ do_repair() {
 
     cd "$app_dir"
 
-    echo -e "  ${BOLD}[1/5] .env-Variablen pruefen${NC}"
+    echo -e "  ${BOLD}[1/5] .env-Variablen prüfen${NC}"
     apply_env_migrations "$app_dir"
     echo ""
 
-    echo -e "  ${BOLD}[2/5] DB-Passwoerter synchronisieren${NC}"
+    echo -e "  ${BOLD}[2/5] DB-Passwörter synchronisieren${NC}"
     if sync_db_passwords "$app_dir" "$compose_cmd"; then
-        echo -e "        ${GREEN}✓${NC} DB-Passwoerter synchronisiert"
+        echo -e "        ${GREEN}✓${NC} DB-Passwörter synchronisiert"
     else
-        echo -e "        ${YELLOW}!${NC} Sync nicht moeglich (Stack laeuft nicht?)"
+        echo -e "        ${YELLOW}!${NC} Sync nicht möglich (Stack läuft nicht?)"
     fi
     echo ""
 
@@ -1536,7 +1745,7 @@ do_repair() {
         sleep 1; retries=$((retries + 1)); echo -n "."
     done
     echo ""
-    if $auth_ok; then
+    if [ "$auth_ok" = true ]; then
         echo -e "        ${GREEN}✓${NC} Auth-Service erreichbar"
     else
         echo -e "        ${YELLOW}!${NC} Auth-Service antwortet nicht"
@@ -1545,17 +1754,23 @@ do_repair() {
     echo ""
 
     echo -e "  ${BOLD}[5/5] Nginx-Konfiguration${NC}"
-    local nginx_file="${BASE_DIR}/nginx-${INSTANCE_NAME:-ameise-production}.conf"
-    generate_nginx_conf "$nginx_file"
-    echo -e "        ${GREEN}✓${NC} Nginx-Config generiert: $nginx_file"
-    echo -e "        ${YELLOW}!${NC} Nginx wird NICHT automatisch ueberschrieben."
-    show_nginx_manual_steps "$nginx_file"
+    if command -v nginx &>/dev/null; then
+        local nginx_file="${BASE_DIR}/nginx-${INSTANCE_NAME:-ameise-production}.conf"
+        generate_nginx_conf "$nginx_file"
+        if install_nginx_conf "$nginx_file"; then
+            echo -e "        ${GREEN}✓${NC} Nginx aktualisiert"
+        else
+            echo -e "        ${YELLOW}!${NC} Nginx konnte nicht aktualisiert werden"
+        fi
+    else
+        echo -e "        ${DIM}(Nginx nicht installiert)${NC}"
+    fi
+    echo ""
 
     echo -e "  ${GREEN}${BOLD}Repair abgeschlossen.${NC}"
-    echo -e "  Pruefe: bash scripts/server-setup.sh --doctor"
+    echo -e "  Prüfe: bash scripts/server-setup.sh --doctor"
     echo ""
 }
-
 
 # ═════════════════════════════════════════════════════════════════
 # STATUS
@@ -1589,7 +1804,7 @@ do_status() {
     for svc in $services; do
         local container="${project}-${svc}"
         if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${container}"; then
-            log "${svc} laeuft"
+            log "${svc} läuft"
         else
             err "${svc} gestoppt"
         fi
@@ -1661,7 +1876,7 @@ do_clean() {
     fi
 
     echo ""
-    echo -e "  ${RED}${BOLD}Zweite Bestaetigung:${NC} Tippe '${project}' und druecke Enter:"
+    echo -e "  ${RED}${BOLD}Zweite Bestätigung:${NC} Tippe '${project}' und drücke Enter:"
     local confirm_word
     read -rp "  > " confirm_word
     if [ "$confirm_word" != "$project" ]; then
@@ -1676,7 +1891,7 @@ do_clean() {
     echo ""
     echo "  Stufe:"
     echo "    1) Nur Services stoppen (Daten bleiben)"
-    echo "    2) Services + Daten loeschen"
+    echo "    2) Services + Daten löschen"
     echo "    3) Alles entfernen (inkl. Nginx-Config)"
     echo "    4) Abbrechen"
     echo ""
@@ -1706,11 +1921,11 @@ do_clean() {
                 sudo rm -f "/etc/nginx/sites-enabled/${nginx_name}.conf" 2>/dev/null || true
                 sudo rm -f "/etc/nginx/sites-available/${nginx_name}.conf" 2>/dev/null || true
                 rm -f "${BASE_DIR}/nginx-${nginx_name}.conf"
-                command -v nginx &>/dev/null && sudo nginx -t >/dev/null 2>&1 && \
-                    sudo systemctl reload nginx 2>/dev/null || true
-                [ -d "$BASE_DIR" ] && [ -z "$(ls -A "$BASE_DIR" 2>/dev/null)" ] && \
-                    rmdir "$BASE_DIR" 2>/dev/null || true
+                command -v nginx &>/dev/null && sudo nginx -t >/dev/null 2>&1 && sudo systemctl reload nginx 2>/dev/null || true
+
+                [ -d "$BASE_DIR" ] && [ -z "$(ls -A "$BASE_DIR" 2>/dev/null)" ] && rmdir "$BASE_DIR" 2>/dev/null || true
             fi
+
             log "Deinstallation abgeschlossen."
             ;;
         *)
@@ -1736,7 +1951,7 @@ do_reconfigure() {
     source "$config_file"
     migrate_old_config_vars
 
-    header "Konfiguration aendern"
+    header "Konfiguration ändern"
     info "Bisherige Werte werden als Defaults angezeigt."
     echo ""
 
@@ -1754,15 +1969,12 @@ do_reconfigure() {
     app_dir=$(detect_app_dir "$BASE_DIR")
     generate_docker_env "${app_dir}/docker/.env"
 
-    # Nginx-Config regenerieren (nicht automatisch installieren)
     local nginx_file="${BASE_DIR}/nginx-${INSTANCE_NAME:-ameise-production}.conf"
     generate_nginx_conf "$nginx_file"
 
     echo ""
-    info "docker/.env und Nginx-Config wurden aktualisiert."
+    info "docker/.env wurde aktualisiert."
     info "Nginx-Config: $nginx_file"
-    warn "Nginx wird NICHT automatisch ueberschrieben."
-    show_nginx_manual_steps "$nginx_file"
     info "Zum Anwenden: bash scripts/server-setup.sh --update"
     echo ""
 }
@@ -1772,12 +1984,17 @@ do_reconfigure() {
 # ═════════════════════════════════════════════════════════════════
 
 do_harden() {
-    header "Firewall-Haertung (ufw)"
+    header "Firewall-Härtung (ufw)"
 
     if ! command -v ufw >/dev/null 2>&1; then
-        err "ufw nicht installiert."
-        err "  Installation: sudo apt install -y ufw"
+        err "ufw nicht installiert. Installation: sudo apt install -y ufw"
         return 1
+    fi
+
+    # Config laden falls nötig (für PROTOCOL)
+    if [ -z "${PROTOCOL:-}" ]; then
+        local config_file="${BASE_DIR_OVERRIDE:-/opt/ameise-production}/config.env"
+        [ -f "$config_file" ] && source "$config_file" && migrate_old_config_vars
     fi
 
     local ufw_status
@@ -1786,27 +2003,30 @@ do_harden() {
         info "ufw ist bereits aktiv:"
         sudo ufw status numbered 2>/dev/null | sed 's/^/    /'
         echo ""
-        if ! confirm "Firewall-Regeln neu konfigurieren?" "n"; then return 0; fi
+        if ! confirm "Firewall-Regeln neu konfigurieren?" "n"; then
+            return 0
+        fi
     fi
 
-    local prot="${PROTOCOL:-https}"
     echo ""
-    echo "  Folgende Ports werden geoeffnet:"
+    echo "  Folgende Ports werden geöffnet:"
     echo "    SSH (22):   IMMER OFFEN"
     echo "    HTTP (80):  Offen (Nginx)"
-    [ "$prot" = "https" ] && echo "    HTTPS (443): Offen (SSL)"
+    [ "${PROTOCOL:-}" = "https" ] && echo "    HTTPS (443): Offen (SSL)"
     echo ""
     echo "  Alle anderen Ports: GESPERRT"
     echo ""
 
-    if ! confirm "Firewall aktivieren?" "n"; then return 0; fi
+    if ! confirm "Firewall aktivieren?" "n"; then
+        return 0
+    fi
 
     sudo ufw --force reset >/dev/null 2>&1
-    sudo ufw default deny incoming  >/dev/null 2>&1
+    sudo ufw default deny incoming >/dev/null 2>&1
     sudo ufw default allow outgoing >/dev/null 2>&1
-    sudo ufw allow 22/tcp  comment "SSH"   >/dev/null 2>&1
-    sudo ufw allow 80/tcp  comment "HTTP"  >/dev/null 2>&1
-    [ "$prot" = "https" ] && sudo ufw allow 443/tcp comment "HTTPS" >/dev/null 2>&1
+    sudo ufw allow 22/tcp comment "SSH" >/dev/null 2>&1
+    sudo ufw allow 80/tcp comment "HTTP" >/dev/null 2>&1
+    [ "${PROTOCOL:-}" = "https" ] && sudo ufw allow 443/tcp comment "HTTPS" >/dev/null 2>&1
     sudo ufw --force enable >/dev/null 2>&1
 
     if sudo ufw status | grep -q "Status: active"; then
@@ -1832,13 +2052,14 @@ do_unharden() {
     fi
 
     warn "ALLE Ports werden wieder offen sein!"
-    if ! confirm "Firewall deaktivieren?" "n"; then return 0; fi
+    if ! confirm "Firewall deaktivieren?" "n"; then
+        return 0
+    fi
 
     sudo ufw --force disable >/dev/null 2>&1
     log "Firewall deaktiviert."
     echo ""
 }
-
 
 # ═════════════════════════════════════════════════════════════════
 # HAUPTPROGRAMM
@@ -1863,6 +2084,7 @@ main() {
         reconfigure) do_reconfigure ;;
 
         setup)
+            # Prüfe ob bereits installiert
             local existing_config="${BASE_DIR_OVERRIDE:-}/config.env"
             if [ -n "$BASE_DIR_OVERRIDE" ] && [ -f "$existing_config" ]; then
                 warn "Es existiert bereits eine Installation!"
@@ -1870,7 +2092,7 @@ main() {
                 echo ""
                 echo "  Optionen:"
                 echo "    --update       Aktualisieren"
-                echo "    --reconfigure  Konfiguration aendern"
+                echo "    --reconfigure  Konfiguration ändern"
                 echo "    --uninstall    Deinstallieren"
                 echo ""
                 if ! confirm "Trotzdem ein neues Setup starten?" "n"; then
@@ -1887,6 +2109,7 @@ main() {
                 exit 0
             fi
 
+            # Setup-Log starten
             setup_log_init "$BASE_DIR"
             slog "Setup gestartet"
             slog_var "Instanz" "$INSTANCE_NAME"
@@ -1906,20 +2129,19 @@ main() {
                 echo "  Studio:  ssh -L ${STUDIO_PORT}:127.0.0.1:${STUDIO_PORT} $(whoami)@$(hostname)"
                 echo ""
 
-                echo -e "  ${BOLD}Naechste Schritte -- Nginx:${NC}"
-                echo ""
+                # Nginx-Hinweise
                 if ! command -v nginx >/dev/null 2>&1; then
+                    echo -e "  ${BOLD}Nächste Schritte:${NC}"
+                    echo ""
                     echo "  1. Nginx installieren:"
                     echo "     sudo apt install nginx"
                     echo ""
                     echo "  2. Nginx-Config aktivieren:"
-                else
-                    echo "  Nginx-Config aktivieren (bestehende Config wird NICHT automatisch ueberschrieben):"
+                    echo "     sudo cp ${BASE_DIR}/nginx-${INSTANCE_NAME}.conf /etc/nginx/sites-available/"
+                    echo "     sudo ln -sf /etc/nginx/sites-available/nginx-${INSTANCE_NAME}.conf /etc/nginx/sites-enabled/"
+                    echo "     sudo nginx -t && sudo systemctl reload nginx"
+                    echo ""
                 fi
-                echo "     sudo cp ${BASE_DIR}/nginx-${INSTANCE_NAME}.conf /etc/nginx/sites-available/${INSTANCE_NAME}.conf"
-                echo "     sudo ln -sf /etc/nginx/sites-available/${INSTANCE_NAME}.conf /etc/nginx/sites-enabled/${INSTANCE_NAME}.conf"
-                echo "     sudo nginx -t && sudo systemctl reload nginx"
-                echo ""
 
                 if [ "$PROTOCOL" = "https" ]; then
                     echo "  SSL-Zertifikat einrichten:"
@@ -1933,13 +2155,20 @@ main() {
 
                 echo -e "  ${BOLD}DNS konfigurieren:${NC}"
                 if [ -n "$server_ip" ]; then
-                    echo "     ${APP_HOSTNAME}  →  ${server_ip}"
+                    echo "     Beim Domain-Anbieter einen A-Record anlegen:"
+                    echo "       ${APP_HOSTNAME}  →  ${server_ip}"
                 else
-                    echo "     ${APP_HOSTNAME}  →  <Server-IP>"
+                    echo "     Beim Domain-Anbieter einen A-Record anlegen:"
+                    echo "       ${APP_HOSTNAME}  →  <Server-IP>"
                 fi
                 echo ""
-                echo "     Auf dem Server selbst (fuer interne Aufloesung):"
+                echo "     Zusätzlich auf dem Server selbst (für interne Auflösung):"
                 echo "       echo \"127.0.0.1 ${APP_HOSTNAME}\" | sudo tee -a /etc/hosts"
+                echo ""
+
+                echo "  Admin-User anlegen:"
+                echo "     Unter /login mit einem Admin-Account einloggen,"
+                echo "     dann unter Admin → Mitarbeiter einen neuen Benutzer anlegen."
                 echo ""
 
                 echo -e "  ${BOLD}Befehle:${NC}"
@@ -1948,8 +2177,9 @@ main() {
                 echo "    bash scripts/server-setup.sh --doctor     Diagnose"
                 echo ""
 
+                # Firewall anbieten
                 if command -v ufw >/dev/null 2>&1; then
-                    if confirm "Firewall jetzt haerten? (empfohlen)" "n"; then
+                    if confirm "Firewall jetzt härten? (empfohlen)" "n"; then
                         do_harden
                     fi
                 fi

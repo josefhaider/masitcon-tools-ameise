@@ -23,7 +23,7 @@ import {
   Database,
   MoreHorizontal,
 } from "lucide-react";
-import { useSidebar } from "@/context/SidebarContext";
+import { useSidebar } from "@/contexts/SidebarContext";
 import { useRoles } from "@/contexts/permissions-context";
 import { useProfile } from "@/contexts/profile-context";
 import { supabase } from "@/integrations/supabase/client";

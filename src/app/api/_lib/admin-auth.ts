@@ -26,7 +26,6 @@ export async function requireAdmin(): Promise<
   } = await supabase.auth.getUser();
 
   if (userError || !user) {
-    console.error("User verification failed:", userError);
     return { error: "Unauthorized", status: 401 };
   }
 
@@ -42,7 +41,6 @@ export async function requireAdmin(): Promise<
     !roles ||
     !roles.some((r: { role: string }) => r.role === "admin")
   ) {
-    console.error("Admin check failed:", rolesError);
     return {
       error: "Nur Administratoren können diese Aktion ausführen",
       status: 403,

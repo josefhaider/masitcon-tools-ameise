@@ -552,7 +552,7 @@ export const calculateTeamMonthlyHours = async (
         actualHours: monthData.actualHours,
         balance: monthData.balance,
         vacationDaysUsed: vacationDays,
-        vacationDaysTotal: 30, // TODO: Aus Profil oder Einstellungen laden
+        vacationDaysTotal: 30, // Fallback: fixer Wert bis Urlaubskontingent im Profil hinterlegt wird
         sickDays,
         hasOpenTimeEntries: (monthData.missingDays?.length || 0) > 0,
         hasNegativeBalance: monthData.balance < 0,

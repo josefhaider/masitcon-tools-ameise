@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { LogOut, User, Key } from "lucide-react";
-import { useSidebar } from "@/context/SidebarContext";
+import { useSidebar } from "@/contexts/SidebarContext";
 import { useProfile } from "@/contexts/profile-context";
 import { supabase } from "@/integrations/supabase/client";
 import {

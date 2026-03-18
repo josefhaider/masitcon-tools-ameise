@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { SidebarProvider } from "@/context/SidebarContext";
+import { SidebarProvider } from "@/contexts/SidebarContext";
 
 export const metadata: Metadata = {
   title: "AMEISE | masitcon",

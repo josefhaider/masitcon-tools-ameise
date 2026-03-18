@@ -43,12 +43,6 @@ export async function POST(request: Request) {
             { status: 400 }
           );
         }
-        console.log(
-          "Updating email for user:",
-          target_user_id,
-          "to:",
-          new_email
-        );
         const { data: emailData, error: emailError } =
           await adminClient.auth.admin.updateUserById(target_user_id, {
             email: new_email,
@@ -86,7 +80,6 @@ export async function POST(request: Request) {
             { status: 400 }
           );
         }
-        console.log("Resetting password for user:", target_user_id);
         const { error: passwordError } =
           await adminClient.auth.admin.updateUserById(target_user_id, {
             password: new_password,
@@ -108,10 +101,6 @@ export async function POST(request: Request) {
             { status: 404 }
           );
         }
-        console.log(
-          "Sending password reset email to:",
-          targetUser.user.email
-        );
         const { data: linkData, error: linkError } =
           await adminClient.auth.admin.generateLink({
             type: "recovery",
@@ -130,7 +119,6 @@ export async function POST(request: Request) {
       }
 
       case "archive_user": {
-        console.log("Archiving user:", target_user_id);
         const { data: archiveUser, error: archiveUserError } =
           await adminClient.auth.admin.getUserById(target_user_id);
         if (archiveUserError || !archiveUser.user) {
@@ -180,7 +168,6 @@ export async function POST(request: Request) {
       }
 
       case "unarchive_user": {
-        console.log("Unarchiving user:", target_user_id);
         const { data: unarchiveUser, error: unarchiveUserError } =
           await adminClient.auth.admin.getUserById(target_user_id);
         if (unarchiveUserError || !unarchiveUser.user) {
@@ -224,7 +211,6 @@ export async function POST(request: Request) {
       }
 
       case "delete_user": {
-        console.log("Attempting to delete user:", target_user_id);
         const { data: deleteUser, error: deleteUserError } =
           await adminClient.auth.admin.getUserById(target_user_id);
         if (deleteUserError || !deleteUser.user) {
@@ -317,7 +303,6 @@ export async function POST(request: Request) {
         );
     }
 
-    console.log("Action completed successfully:", action);
     return NextResponse.json(result);
   } catch (error) {
     console.error("Error in admin-update-user:", error);
