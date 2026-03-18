@@ -93,6 +93,42 @@ find_free_port() {
     echo "$port"
 }
 
+is_subnet_free() {
+    local subnet="$1"
+    local prefix="${subnet%%.*}"
+    local second="${subnet#*.}"
+    second="${second%%.*}"
+    # Alle existierenden Docker-Netzwerk-Subnets holen und auf Überschneidung prüfen
+    docker network inspect $(docker network ls -q 2>/dev/null) \
+        --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' \
+        2>/dev/null | grep -q "^${prefix}\.${second}\." && return 1
+    return 0
+}
+
+find_free_subnet() {
+    # Sucht ein freies /16-Subnet im 172.x.0.0/16-Bereich (Docker-Standard)
+    # Startet bei 172.20, geht bis 172.31
+    local second
+    for second in 20 21 22 23 24 25 26 27 28 29 30 31; do
+        local candidate="172.${second}.0.0/16"
+        if is_subnet_free "$candidate"; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    # Fallback auf 192.168.x.0/24-Bereich
+    local third
+    for third in 100 101 102 103 104 105; do
+        local candidate="192.168.${third}.0/24"
+        if is_subnet_free "$candidate"; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    echo ""
+    return 1
+}
+
 detect_compose() {
     if docker compose version >/dev/null 2>&1; then
         echo "docker compose"
@@ -252,7 +288,7 @@ migrate_old_config_vars() {
     [ -z "${PROTOCOL:-}" ] && PROTOCOL="https"
     [ -z "${SMTP_SENDER_NAME:-}" ] && SMTP_SENDER_NAME="Ameise Zeiterfassung"
     [ -z "${BACKUP_KEEP:-}" ] && BACKUP_KEEP=7
-    [ -z "${DOCKER_SUBNET:-}" ] && DOCKER_SUBNET="172.20.0.0/16"
+    # DOCKER_SUBNET: kein harter Default -- wird in collect_config geprüft
 }
 
 # ─── App-Verzeichnis erkennen ────────────────────────────────────
@@ -526,14 +562,30 @@ collect_config() {
         eval "${var_name}=\"$port_val\""
     done
 
-    # Docker-Subnet (automatisch basierend auf Instanzname)
-    if [ -z "${DOCKER_SUBNET:-}" ]; then
+    # Docker-Subnet: erst Kandidat wählen, dann auf Konflikt prüfen
+    local subnet_candidate="${DOCKER_SUBNET:-}"
+    if [ -z "$subnet_candidate" ]; then
         if [[ "$INSTANCE_NAME" == *staging* ]]; then
-            DOCKER_SUBNET="172.21.0.0/16"
+            subnet_candidate="172.21.0.0/16"
         else
-            DOCKER_SUBNET="172.20.0.0/16"
+            subnet_candidate="172.20.0.0/16"
         fi
     fi
+
+    if ! is_subnet_free "$subnet_candidate"; then
+        echo ""
+        warn "Subnet ${subnet_candidate} wird bereits von einem anderen Docker-Netzwerk verwendet."
+        local free_subnet
+        free_subnet=$(find_free_subnet)
+        if [ -n "$free_subnet" ]; then
+            echo -e "    ${GREEN}→${NC} Verwende freies Subnet: $free_subnet"
+            subnet_candidate="$free_subnet"
+        else
+            warn "Kein freies Subnet gefunden! Bitte manuell eingeben."
+            subnet_candidate=""
+        fi
+    fi
+    DOCKER_SUBNET=$(ask "Docker-Subnet" "${subnet_candidate:-172.20.0.0/16}")
 
     # ── 4/5: E-Mail (SMTP) ────────────────────────────────────────
     header "Schritt 4/5 -- E-Mail (SMTP)"
