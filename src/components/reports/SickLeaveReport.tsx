@@ -15,6 +15,7 @@ import { de } from 'date-fns/locale';
 import { FileText, Download, Check, Loader2 } from 'lucide-react';
 import { generateSickLeaveReportPDF, SickLeaveReportEntry } from '@/lib/pdfGenerator';
 import { fetchHolidaysForRange, calculateWorkDaysWithHolidays } from '@/lib/workDaysCalculator';
+import { mergeSickLeaves } from '@/lib/sickLeaveMerger';
 
 interface SickLeave {
   id: string;
@@ -37,6 +38,7 @@ export default function SickLeaveReport() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [onlyVerified, setOnlyVerified] = useState(true);
   const [workDaysMap, setWorkDaysMap] = useState<Map<string, number>>(new Map());
+  const [mergeInfo, setMergeInfo] = useState<{ original: number; merged: number } | null>(null);
 
   const months = [
     { value: 1, label: 'Januar' },
@@ -98,18 +100,27 @@ export default function SickLeaveReport() {
         })
       );
 
-      setSickLeaves(sickLeavesWithProfiles);
+      // Zusammenhängende Krankmeldungen mergen und Duplikate eliminieren
+      const originalCount = sickLeavesWithProfiles.length;
+      const mergedLeaves = mergeSickLeaves(sickLeavesWithProfiles);
+      setMergeInfo(
+        originalCount !== mergedLeaves.length
+          ? { original: originalCount, merged: mergedLeaves.length }
+          : null
+      );
+
+      setSickLeaves(mergedLeaves);
 
       // Berechne Arbeitstage für alle Krankmeldungen
-      if (sickLeavesWithProfiles.length > 0) {
-        const allDates = sickLeavesWithProfiles.flatMap(sl => [new Date(sl.start_date), new Date(sl.end_date)]);
+      if (mergedLeaves.length > 0) {
+        const allDates = mergedLeaves.flatMap(sl => [new Date(sl.start_date), new Date(sl.end_date)]);
         const minDate = new Date(Math.min(...allDates.map(d => d.getTime())));
         const maxDate = new Date(Math.max(...allDates.map(d => d.getTime())));
-        
+
         const holidaySet = await fetchHolidaysForRange(minDate, maxDate);
-        
+
         const newMap = new Map<string, number>();
-        for (const sl of sickLeavesWithProfiles) {
+        for (const sl of mergedLeaves) {
           // Krankmeldungszeitraum auf gewählten Monat beschränken
           const effectiveStart = sl.start_date > startDate ? sl.start_date : startDate;
           const effectiveEnd = sl.end_date < endDateStr ? sl.end_date : endDateStr;
@@ -229,6 +240,13 @@ export default function SickLeaveReport() {
             <h3 className="font-semibold mb-4">
               Vorschau: Krankmeldungsbericht {monthLabel} {selectedYear}
             </h3>
+
+            {mergeInfo && (
+              <div className="mb-4 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-3 py-2">
+                {mergeInfo.original - mergeInfo.merged} zusammenhängende/doppelte Krankmeldung(en) wurden automatisch zusammengefasst
+                ({mergeInfo.original} → {mergeInfo.merged} Einträge).
+              </div>
+            )}
 
             {loading ? (
               <div className="flex justify-center py-8">
