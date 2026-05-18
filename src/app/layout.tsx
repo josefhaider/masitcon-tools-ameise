@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { SidebarProvider } from "@/contexts/SidebarContext";
+import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
   title: "AMEISE | masitcon",
@@ -24,6 +25,7 @@ export default function RootLayout({
       </head>
       <body className="font-outfit bg-gray-50 antialiased">
         <SidebarProvider>{children}</SidebarProvider>
+        <Toaster position="top-right" richColors />
       </body>
     </html>
   );

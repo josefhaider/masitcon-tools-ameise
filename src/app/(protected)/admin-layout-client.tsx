@@ -7,7 +7,6 @@ import { useSidebar } from "@/contexts/SidebarContext";
 import AppHeader from "@/layout/AppHeader";
 import AppSidebar from "@/layout/AppSidebar";
 import Backdrop from "@/layout/Backdrop";
-import { Toaster } from "sonner";
 import { useState } from "react";
 
 type SessionForLayout = {
@@ -61,7 +60,6 @@ function LayoutInner({
             </main>
           </div>
         </div>
-        <Toaster position="top-right" richColors />
       </ProfileProvider>
     </RolesProvider>
   );
