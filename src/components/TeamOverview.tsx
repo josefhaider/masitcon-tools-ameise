@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isWeekend, isBefore, isAfter } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isWeekend } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { FileDown } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateTeamOverviewPDF, TeamOverviewReportData } from '@/lib/pdfGenerator';
 import { getHolidaysForYear } from '@/lib/holidays';
+import { calculateHoursBalance } from '@/lib/balance';
 import ReadOnlyTimeCalendar from './ReadOnlyTimeCalendar';
 
 interface TeamEmployeeData {
@@ -41,33 +42,6 @@ const formatHoursMinutes = (decimalHours: number): string => {
     return `${sign}${hours}h`;
   }
   return `${sign}${hours}h ${minutes}min`;
-};
-
-/**
- * Gibt die relevanteste Abwesenheit für ein bestimmtes Datum zurück.
- * Priorisierung: comp_time > halber Urlaub > andere Abwesenheiten
- */
-const getPrioritizedAbsence = (day: Date, absences: any[]): any | null => {
-  // String-Vergleich für zeitzonen-unabhängige Prüfung
-  const dayStr = format(day, 'yyyy-MM-dd');
-  const matchingAbsences = absences.filter(a => 
-    dayStr >= a.start_date && dayStr <= a.end_date
-  );
-  
-  if (matchingAbsences.length === 0) return null;
-  if (matchingAbsences.length === 1) return matchingAbsences[0];
-  
-  // Bei mehreren Abwesenheiten: Priorisierung
-  // 1. comp_time hat höchste Priorität (SOLL soll bleiben)
-  const compTime = matchingAbsences.find(a => a.type === 'comp_time');
-  if (compTime) return compTime;
-  
-  // 2. Halber Urlaubstag hat zweite Priorität
-  const halfDayVacation = matchingAbsences.find(a => a.type === 'vacation' && a.is_half_day);
-  if (halfDayVacation) return halfDayVacation;
-  
-  // 3. Sonst: erste gefundene Abwesenheit
-  return matchingAbsences[0];
 };
 
 export const TeamOverview = () => {
@@ -114,10 +88,11 @@ export const TeamOverview = () => {
       const holidayDates = new Set(holidays.map(h => h.date));
 
       // Get work schedules for all users
+      // Hinweis: kein is_active-Filter – Gültigkeit wird allein über valid_from/valid_to
+      // bestimmt (identisch zum Salden-Report, damit beide Auswertungen übereinstimmen).
       const { data: allSchedules } = await supabase
         .from('employee_work_schedules')
-        .select('*')
-        .eq('is_active', true);
+        .select('*');
 
       // Get time entries for the selected month only
       const { data: allTimeEntries } = await supabase
@@ -166,11 +141,12 @@ export const TeamOverview = () => {
         .lte('start_date', yearEndStr)
         .gte('end_date', yearStartStr);
 
-      // Get balance corrections up to end of month (for hours correction context)
+      // Get balance corrections up to YTD end (Stunden-Korrekturen bis heute,
+      // Urlaubs-Korrekturen werden separat über applies_to_year gefiltert)
       const { data: allCorrections } = await supabase
         .from('balance_corrections')
         .select('*')
-        .lte('effective_date', effectiveEndStr);
+        .lte('effective_date', ytdEndStr);
 
       const employeeData: TeamEmployeeData[] = [];
 
@@ -189,79 +165,18 @@ export const TeamOverview = () => {
           .filter(c => c.correction_type === 'vacation' && c.applies_to_year === year)
           .reduce((sum, c) => sum + (c.vacation_days_adjustment || 0), 0);
 
-        // Calculate hours correction for YTD balance
-        const hoursCorrection = userCorrections
-          .filter(c => c.correction_type === 'hours' && new Date(c.effective_date) <= ytdEnd)
-          .reduce((sum, c) => sum + (c.hours_adjustment || 0), 0);
-
-        // Calculate target hours for the selected month only
-        let targetHours = 0;
-        const daysToCheck = eachDayOfInterval({ start: monthStart, end: effectiveEndDate });
-        
-        for (const day of daysToCheck) {
-          if (isWeekend(day)) continue;
-          
-          const dayStr = format(day, 'yyyy-MM-dd');
-          if (holidayDates.has(dayStr)) continue;
-
-          // Check if day is covered by approved absence (mit Priorisierung)
-          const absenceOnDay = getPrioritizedAbsence(day, userAbsences);
-          
-          // Bei halbem Urlaubstag: nur halbe SOLL-Stunden neutralisieren
-          if (absenceOnDay && absenceOnDay.type === 'vacation' && absenceOnDay.is_half_day) {
-            // Finde Schedule um halbe SOLL-Stunden zu berechnen
-            const dayOfWeek = day.getDay();
-            const schedule = userSchedules.find(s => {
-              if (s.day_of_week !== dayOfWeek) return false;
-              const validFrom = new Date(s.valid_from);
-              const validTo = s.valid_to ? new Date(s.valid_to) : null;
-              return !isBefore(day, validFrom) && (!validTo || !isAfter(day, validTo));
-            });
-            if (schedule) {
-              const startParts = schedule.start_time.split(':').map(Number);
-              const endParts = schedule.end_time.split(':').map(Number);
-              const startMinutes = startParts[0] * 60 + startParts[1];
-              const endMinutes = endParts[0] * 60 + endParts[1];
-              const workMinutes = endMinutes - startMinutes - schedule.break_minutes;
-              // Nur halbe SOLL-Stunden hinzufügen
-              targetHours += (workMinutes / 60) / 2;
-            }
-            continue;
-          }
-          
-          // Bei Überstundenfrei (comp_time): SOLL-Stunden beibehalten
-          // Alle anderen Abwesenheiten: SOLL-Stunden auf 0
-          if (absenceOnDay && absenceOnDay.type !== 'comp_time') continue;
-
-          // Find applicable schedule for this day
-          const dayOfWeek = day.getDay();
-          const schedule = userSchedules.find(s => {
-            if (s.day_of_week !== dayOfWeek) return false;
-            const validFrom = new Date(s.valid_from);
-            const validTo = s.valid_to ? new Date(s.valid_to) : null;
-            return !isBefore(day, validFrom) && (!validTo || !isAfter(day, validTo));
-          });
-
-          if (schedule) {
-            const startParts = schedule.start_time.split(':').map(Number);
-            const endParts = schedule.end_time.split(':').map(Number);
-            const startMinutes = startParts[0] * 60 + startParts[1];
-            const endMinutes = endParts[0] * 60 + endParts[1];
-            const workMinutes = endMinutes - startMinutes - schedule.break_minutes;
-            targetHours += workMinutes / 60;
-          }
-        }
-
-        // Calculate actual hours from time entries (for selected month only)
-        let actualHours = 0;
-        for (const entry of userTimeEntries) {
-          const startParts = entry.start_time.split(':').map(Number);
-          const endParts = entry.end_time.split(':').map(Number);
-          const startMinutes = startParts[0] * 60 + startParts[1];
-          const endMinutes = endParts[0] * 60 + endParts[1];
-          const workMinutes = endMinutes - startMinutes - entry.break_minutes;
-          actualHours += workMinutes / 60;
-        }
+        // Saldo (Monat): IST - SOLL für den gewählten Monat, ohne Korrekturen (wie bisher)
+        const monthResult = calculateHoursBalance({
+          schedules: userSchedules,
+          timeEntries: userTimeEntries,
+          absences: userAbsences,
+          corrections: [],
+          rangeStart: monthStart,
+          rangeEnd: effectiveEndDate,
+          holidays: holidayDates,
+        });
+        const targetHours = monthResult.targetHours;
+        const actualHours = monthResult.actualHours;
 
         // Calculate vacation days for the FULL YEAR (not just the month)
         const todayStr = format(today, 'yyyy-MM-dd');
@@ -319,76 +234,21 @@ export const TeamOverview = () => {
           }
         }
 
-        const balance = actualHours - targetHours;
+        const balance = monthResult.balance;
         const vacationTotal = (profile.annual_vacation_days || 30) + vacationCorrection;
 
-        // Calculate cumulative YTD hours
-        let ytdTargetHours = 0;
-        const ytdDaysToCheck = eachDayOfInterval({ start: yearStart, end: ytdEnd });
-        
-        for (const day of ytdDaysToCheck) {
-          if (isWeekend(day)) continue;
-          
-          const dayStr = format(day, 'yyyy-MM-dd');
-          if (holidayDates.has(dayStr)) continue;
-
-          // Check if day is covered by approved absence (mit Priorisierung)
-          const absenceOnDay = getPrioritizedAbsence(day, userYtdAbsences);
-          
-          // Bei halbem Urlaubstag: nur halbe SOLL-Stunden neutralisieren
-          if (absenceOnDay && absenceOnDay.type === 'vacation' && absenceOnDay.is_half_day) {
-            const dayOfWeek = day.getDay();
-            const schedule = userSchedules.find(s => {
-              if (s.day_of_week !== dayOfWeek) return false;
-              const validFrom = new Date(s.valid_from);
-              const validTo = s.valid_to ? new Date(s.valid_to) : null;
-              return !isBefore(day, validFrom) && (!validTo || !isAfter(day, validTo));
-            });
-            if (schedule) {
-              const startParts = schedule.start_time.split(':').map(Number);
-              const endParts = schedule.end_time.split(':').map(Number);
-              const startMinutes = startParts[0] * 60 + startParts[1];
-              const endMinutes = endParts[0] * 60 + endParts[1];
-              const workMinutes = endMinutes - startMinutes - schedule.break_minutes;
-              ytdTargetHours += (workMinutes / 60) / 2;
-            }
-            continue;
-          }
-          
-          // Bei Überstundenfrei (comp_time): SOLL-Stunden beibehalten
-          if (absenceOnDay && absenceOnDay.type !== 'comp_time') continue;
-
-          // Find applicable schedule for this day
-          const dayOfWeek = day.getDay();
-          const schedule = userSchedules.find(s => {
-            if (s.day_of_week !== dayOfWeek) return false;
-            const validFrom = new Date(s.valid_from);
-            const validTo = s.valid_to ? new Date(s.valid_to) : null;
-            return !isBefore(day, validFrom) && (!validTo || !isAfter(day, validTo));
-          });
-
-          if (schedule) {
-            const startParts = schedule.start_time.split(':').map(Number);
-            const endParts = schedule.end_time.split(':').map(Number);
-            const startMinutes = startParts[0] * 60 + startParts[1];
-            const endMinutes = endParts[0] * 60 + endParts[1];
-            const workMinutes = endMinutes - startMinutes - schedule.break_minutes;
-            ytdTargetHours += workMinutes / 60;
-          }
-        }
-
-        // Calculate YTD actual hours
-        let ytdActualHours = 0;
-        for (const entry of userYtdTimeEntries) {
-          const startParts = entry.start_time.split(':').map(Number);
-          const endParts = entry.end_time.split(':').map(Number);
-          const startMinutes = startParts[0] * 60 + startParts[1];
-          const endMinutes = endParts[0] * 60 + endParts[1];
-          const workMinutes = endMinutes - startMinutes - entry.break_minutes;
-          ytdActualHours += workMinutes / 60;
-        }
-
-        const cumulativeBalance = ytdActualHours - ytdTargetHours + hoursCorrection;
+        // Kumuliertes Saldo (YTD) vom Jahresanfang bis ytdEnd, inkl. Stundenkorrekturen.
+        // Geteilte Funktion = identische Logik wie im Salden-Report.
+        const ytdResult = calculateHoursBalance({
+          schedules: userSchedules,
+          timeEntries: userYtdTimeEntries,
+          absences: userYtdAbsences,
+          corrections: userCorrections,
+          rangeStart: yearStart,
+          rangeEnd: ytdEnd,
+          holidays: holidayDates,
+        });
+        const cumulativeBalance = ytdResult.balance;
 
         employeeData.push({
           userId: profile.id,

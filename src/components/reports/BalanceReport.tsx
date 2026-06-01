@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { format, startOfYear, eachMonthOfInterval, startOfMonth, endOfMonth, parseISO, eachDayOfInterval, getDay } from 'date-fns';
+import { format, startOfYear } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { supabase } from '@/integrations/supabase/client';
+import { calculateHoursBalance } from '@/lib/balance';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -89,7 +90,7 @@ export default function BalanceReport() {
           // Lade genehmigte Abwesenheiten
           const { data: absences } = await supabase
             .from('absences')
-            .select('start_date, end_date, type')
+            .select('start_date, end_date, type, is_half_day')
             .eq('user_id', profile.id)
             .eq('status', 'approved')
             .lte('start_date', format(cutoffDate, 'yyyy-MM-dd'))
@@ -98,88 +99,30 @@ export default function BalanceReport() {
           // Lade Stundenkorrekturen
           const { data: corrections } = await supabase
             .from('balance_corrections')
-            .select('hours_adjustment')
+            .select('hours_adjustment, correction_type, effective_date')
             .eq('user_id', profile.id)
             .eq('correction_type', 'hours')
             .lte('effective_date', format(cutoffDate, 'yyyy-MM-dd'));
 
-          const totalCorrections = corrections?.reduce((sum, c) => sum + (c.hours_adjustment || 0), 0) || 0;
-
-          // Berechne Soll-Stunden
-          let targetHours = 0;
-          const days = eachDayOfInterval({ start: yearStart, end: cutoffDate });
-
-          days.forEach((date) => {
-            const dateStr = format(date, 'yyyy-MM-dd');
-            const dayOfWeek = getDay(date);
-
-            // Überspringe Wochenenden (außer mit Profil)
-            if (dayOfWeek === 0 || dayOfWeek === 6) {
-              const schedule = schedules?.find((s) => {
-                const validTo = s.valid_to || '9999-12-31';
-                return s.day_of_week === dayOfWeek && dateStr >= s.valid_from && dateStr <= validTo;
-              });
-              if (!schedule) return;
-            }
-
-            // Überspringe Feiertage
-            if (holidaysSet.has(dateStr)) return;
-
-          // Prüfe Abwesenheiten - bei halbem Urlaubstag nur halbe SOLL-Stunden abziehen
-          const absenceOnDay = absences?.find((a) => dateStr >= a.start_date && dateStr <= a.end_date);
-          if (absenceOnDay) {
-            if (absenceOnDay.type === 'vacation' && (absenceOnDay as any).is_half_day) {
-              // Halber Urlaubstag: Finde Schedule für halbe SOLL-Berechnung
-              const schedule = schedules?.find((s) => {
-                const validTo = s.valid_to || '9999-12-31';
-                return s.day_of_week === dayOfWeek && dateStr >= s.valid_from && dateStr <= validTo;
-              });
-              if (schedule) {
-                const start = new Date(`2000-01-01T${schedule.start_time}`);
-                const end = new Date(`2000-01-01T${schedule.end_time}`);
-                const hours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-                const breakHours = schedule.break_minutes / 60;
-                targetHours += Math.max(0, hours - breakHours) / 2;
-              }
-              return;
-            }
-            // comp_time behält SOLL-Stunden
-            if (absenceOnDay.type !== 'comp_time') return;
-          }
-
-            // Finde passendes Schedule
-            const schedule = schedules?.find((s) => {
-              const validTo = s.valid_to || '9999-12-31';
-              return s.day_of_week === dayOfWeek && dateStr >= s.valid_from && dateStr <= validTo;
-            });
-
-            if (schedule) {
-              const start = new Date(`2000-01-01T${schedule.start_time}`);
-              const end = new Date(`2000-01-01T${schedule.end_time}`);
-              const hours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-              const breakHours = schedule.break_minutes / 60;
-              targetHours += Math.max(0, hours - breakHours);
-            }
+          // Saldo über geteilte Funktion berechnen (Single Source of Truth)
+          const result = calculateHoursBalance({
+            schedules: schedules || [],
+            timeEntries: timeEntries || [],
+            absences: absences || [],
+            corrections: corrections || [],
+            rangeStart: yearStart,
+            rangeEnd: cutoffDate,
+            holidays: holidaysSet,
           });
-
-          // Berechne Ist-Stunden
-          const actualHours =
-            timeEntries?.reduce((sum, entry) => {
-              const start = new Date(`2000-01-01T${entry.start_time}`);
-              const end = new Date(`2000-01-01T${entry.end_time}`);
-              const hours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-              const breakHours = entry.break_minutes / 60;
-              return sum + Math.max(0, hours - breakHours);
-            }, 0) || 0;
 
           return {
             userId: profile.id,
             name: profile.full_name,
             employeeNumber: profile.employee_number,
-            targetHours: Math.round(targetHours * 100) / 100,
-            actualHours: Math.round(actualHours * 100) / 100,
-            corrections: Math.round(totalCorrections * 100) / 100,
-            balance: Math.round((actualHours - targetHours + totalCorrections) * 100) / 100,
+            targetHours: result.targetHours,
+            actualHours: result.actualHours,
+            corrections: result.corrections,
+            balance: result.balance,
             isExempt: false,
           };
         })
