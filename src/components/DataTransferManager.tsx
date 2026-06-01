@@ -154,7 +154,7 @@ const DataTransferManager = () => {
       }
 
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/employee-data-transfer`,
+        "/api/data-transfer",
         {
           method: "POST",
           headers: {
@@ -251,7 +251,7 @@ const DataTransferManager = () => {
       }
 
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/employee-data-transfer`,
+        "/api/data-transfer",
         {
           method: "POST",
           headers: {
