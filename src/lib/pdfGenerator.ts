@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
+import { travelDayKindLabel, type TravelExpenseDay } from './travelExpenses';
 
 // Extend jsPDF type to include autoTable
 declare module 'jspdf' {
@@ -468,4 +469,181 @@ export function generateBalanceReportPDF(data: BalanceReportData): void {
 
   // Download
   doc.save(`Stundensaldo_${format(data.cutoffDate, 'yyyy-MM-dd')}.pdf`);
+}
+
+// ── Reisekosten: Verpflegungsmehraufwand ─────────────────────────────────────
+
+/** Euro-Betrag für PDF (deutsches Format, z. B. "56,00 €"). */
+const eurPdf = (n: number): string => `${n.toFixed(2).replace('.', ',')} €`;
+
+export interface BusinessTripPdfData {
+  employeeName: string;
+  employeeNumber: string | null;
+  purpose: string;
+  destination: string | null;
+  countryName: string;
+  startLabel: string; // z. B. "01.03.2026 08:00"
+  endLabel: string;
+  days: TravelExpenseDay[];
+  total: number;
+}
+
+/**
+ * Einzelne Reisekostenabrechnung (Verpflegungsmehraufwand) einer Dienstreise
+ * mit Tagesaufstellung – für Ablage und Weitergabe an die Steuerberatung.
+ */
+export function generateBusinessTripPDF(data: BusinessTripPdfData): void {
+  const doc = new jsPDF();
+
+  try {
+    doc.addImage(MASITCON_LOGO_BASE64, 'PNG', 14, 10, 50, 14);
+  } catch {
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(16, 39, 87);
+    doc.text('masitcon', 14, 18);
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text('Reisekostenabrechnung', 196, 15, { align: 'right' });
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Verpflegungsmehraufwand', 196, 22, { align: 'right' });
+
+  // Stammdaten
+  doc.setFontSize(10);
+  let y = 36;
+  const line = (label: string, value: string) => {
+    doc.setFont('helvetica', 'bold');
+    doc.text(label, 14, y);
+    doc.setFont('helvetica', 'normal');
+    doc.text(value, 55, y);
+    y += 6;
+  };
+  line('Mitarbeiter:', `${data.employeeName}${data.employeeNumber ? ` (Nr. ${data.employeeNumber})` : ''}`);
+  line('Anlass:', data.purpose);
+  line('Reiseziel:', `${data.destination ? `${data.destination}, ` : ''}${data.countryName}`);
+  line('Abreise:', data.startLabel);
+  line('Rückkehr:', data.endLabel);
+
+  const tableData = data.days.map((d) => [
+    format(new Date(`${d.date}T00:00:00`), 'EEE, dd.MM.yyyy', { locale: de }),
+    travelDayKindLabel(d.kind),
+    eurPdf(d.baseRate),
+    d.reductions.total > 0 ? `− ${eurPdf(d.reductions.total)}` : '–',
+    eurPdf(d.amount),
+  ]);
+
+  autoTable(doc, {
+    startY: y + 2,
+    head: [['Datum', 'Art', 'Tagessatz', 'Kürzung', 'Betrag']],
+    body: tableData,
+    foot: [['', '', '', 'Gesamt', eurPdf(data.total)]],
+    theme: 'striped',
+    headStyles: { fillColor: [16, 39, 87] },
+    footStyles: { fillColor: [200, 200, 200], textColor: [0, 0, 0], fontStyle: 'bold' },
+    styles: { fontSize: 10, cellPadding: 3 },
+    columnStyles: {
+      0: { cellWidth: 55 },
+      1: { cellWidth: 35 },
+      2: { cellWidth: 30, halign: 'right' },
+      3: { cellWidth: 30, halign: 'right' },
+      4: { cellWidth: 32, halign: 'right', fontStyle: 'bold' },
+    },
+  });
+
+  const finalY = doc.lastAutoTable.finalY + 10;
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.text(
+    'Pauschalen für Verpflegungsmehraufwand gem. § 9 Abs. 4a EStG. Kürzung bei gestellten Mahlzeiten: Frühstück −20 %, Mittag-/Abendessen je −40 % des vollen Tagessatzes.',
+    14,
+    finalY,
+    { maxWidth: 182 }
+  );
+  doc.text(`Erstellt am: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`, 14, finalY + 10);
+
+  const safeName = data.employeeName.replace(/[^a-zA-Z0-9]/g, '_');
+  doc.save(`Reisekostenabrechnung_${safeName}_${data.days[0]?.date ?? ''}.pdf`);
+}
+
+export interface TravelExpenseSummaryRow {
+  employeeName: string;
+  employeeNumber: string | null;
+  purpose: string;
+  destination: string | null;
+  countryName: string;
+  startLabel: string; // "01.03.2026"
+  endLabel: string;
+  total: number;
+}
+
+export interface TravelExpenseSummaryData {
+  fromLabel: string; // "01.01.2026"
+  toLabel: string;
+  rows: TravelExpenseSummaryRow[];
+}
+
+/**
+ * Sammel-Reisekostenabrechnung (Verpflegungsmehraufwand) über einen Zeitraum –
+ * eine Zeile je freigegebener Dienstreise, für die Steuerberatung.
+ */
+export function generateTravelExpenseSummaryPDF(data: TravelExpenseSummaryData): void {
+  const doc = new jsPDF({ orientation: 'landscape' });
+
+  try {
+    doc.addImage(MASITCON_LOGO_BASE64, 'PNG', 14, 10, 50, 14);
+  } catch {
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(16, 39, 87);
+    doc.text('masitcon', 14, 18);
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text('Reisekosten – Verpflegungsmehraufwand', 283, 15, { align: 'right' });
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Zeitraum: ${data.fromLabel} – ${data.toLabel}`, 283, 22, { align: 'right' });
+
+  doc.setFontSize(9);
+  doc.text(`Erstellt am: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`, 14, 30);
+
+  const total = data.rows.reduce((sum, r) => sum + r.total, 0);
+
+  const tableData = data.rows.map((r) => [
+    r.employeeName,
+    r.employeeNumber || '-',
+    r.purpose,
+    `${r.destination ? `${r.destination}, ` : ''}${r.countryName}`,
+    r.startLabel,
+    r.endLabel,
+    eurPdf(r.total),
+  ]);
+
+  autoTable(doc, {
+    startY: 35,
+    head: [['Mitarbeiter', 'P.Nr.', 'Anlass', 'Ziel', 'Von', 'Bis', 'Betrag']],
+    body: tableData,
+    foot: [[`GESAMT (${data.rows.length})`, '', '', '', '', '', eurPdf(total)]],
+    theme: 'striped',
+    headStyles: { fillColor: [16, 39, 87] },
+    footStyles: { fillColor: [200, 200, 200], textColor: [0, 0, 0], fontStyle: 'bold' },
+    styles: { fontSize: 9, cellPadding: 2 },
+    columnStyles: {
+      0: { cellWidth: 45 },
+      1: { cellWidth: 18, halign: 'center' },
+      2: { cellWidth: 60 },
+      3: { cellWidth: 50 },
+      4: { cellWidth: 25, halign: 'center' },
+      5: { cellWidth: 25, halign: 'center' },
+      6: { cellWidth: 28, halign: 'right', fontStyle: 'bold' },
+    },
+  });
+
+  doc.save(`Reisekosten_VMA_${data.fromLabel.replace(/\./g, '-')}_${data.toLabel.replace(/\./g, '-')}.pdf`);
 }

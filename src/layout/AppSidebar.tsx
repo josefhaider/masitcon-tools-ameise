@@ -22,6 +22,8 @@ import {
   ScrollText,
   Database,
   MoreHorizontal,
+  Receipt,
+  Globe,
 } from "lucide-react";
 import { useSidebar } from "@/contexts/SidebarContext";
 import { useRoles } from "@/contexts/permissions-context";
@@ -64,6 +66,7 @@ const AppSidebar: React.FC = () => {
     { label: "Urlaub & Anträge", icon: <Plane />, to: "/urlaub" },
     { label: "Urlaubsplanung", icon: <CalendarDays />, to: "/urlaubsplanung" },
     { label: "Krankmeldung", icon: <Thermometer />, to: "/krankmeldung" },
+    { label: "Reisekosten", icon: <Receipt />, to: "/reisekosten" },
   ];
 
   const genehmigungItems: NavItem[] = [
@@ -73,10 +76,14 @@ const AppSidebar: React.FC = () => {
     ...(isHrManager || isAdmin
       ? [{ label: "Krankmeldungen", icon: <Thermometer />, to: "/genehmigungen/krankmeldungen" }]
       : []),
+    ...(isHrManager || isAdmin
+      ? [{ label: "Reisekosten", icon: <Receipt />, to: "/genehmigungen/reisekosten" }]
+      : []),
   ];
 
   const reportingItems: NavItem[] = [
     { label: "Team-Übersicht", icon: <UsersRound />, to: "/reporting/team" },
+    { label: "Reisekosten", icon: <Receipt />, to: "/reporting/reisekosten" },
     { label: "Reports & PDFs", icon: <FileText />, to: "/reporting", matchExact: true },
   ];
 
@@ -87,6 +94,7 @@ const AppSidebar: React.FC = () => {
     { label: "Direkte Abwesenheiten", icon: <AlertCircle />, to: "/admin/abwesenheiten" },
     { label: "Korrekturbuchungen", icon: <History />, to: "/admin/korrekturen" },
     { label: "Feiertage", icon: <CalendarDays />, to: "/admin/feiertage" },
+    { label: "Reisekostensätze", icon: <Globe />, to: "/admin/reisekostensaetze" },
     { label: "Schulferien", icon: <GraduationCap />, to: "/admin/schulferien" },
     { label: "Audit-Protokoll", icon: <ScrollText />, to: "/admin/audit" },
     { label: "Datentransfer", icon: <Database />, to: "/admin/datentransfer" },

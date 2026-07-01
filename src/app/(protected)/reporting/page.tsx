@@ -9,6 +9,7 @@ export default function ReportingPage() {
       'sick-leave-report': '/reporting/krankmeldungen',
       'hours-report': '/reporting/stunden',
       'balance-report': '/reporting/salden',
+      'travel-expense-report': '/reporting/reisekosten',
       'sick-leave-admin': '/genehmigungen/krankmeldungen',
     };
     router.push(routes[view] || '/reporting');

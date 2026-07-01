@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { FileText, ClipboardList, Scale } from 'lucide-react';
+import { FileText, ClipboardList, Scale, Receipt } from 'lucide-react';
 
 interface ReportDashboardProps {
   onNavigate: (view: string) => void;
@@ -30,6 +30,13 @@ export default function ReportDashboard({ onNavigate }: ReportDashboardProps) {
       description: 'Kumuliertes Stundensaldo aller Mitarbeiter zum gewählten Stichtag.',
       icon: Scale,
       color: 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400'
+    },
+    {
+      id: 'travel-expense-report',
+      title: 'Reisekostenabrechnung',
+      description: 'Verpflegungsmehraufwand für Dienstreisen – PDF und CSV für die Steuerberatung.',
+      icon: Receipt,
+      color: 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400'
     }
   ];
 

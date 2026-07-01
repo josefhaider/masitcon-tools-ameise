@@ -7,13 +7,48 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "13.0.5"
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
+      _applied_migrations: {
+        Row: {
+          applied_at: string | null
+          version: string
+        }
+        Insert: {
+          applied_at?: string | null
+          version: string
+        }
+        Update: {
+          applied_at?: string | null
+          version?: string
+        }
+        Relationships: []
+      }
       absences: {
         Row: {
           approved_at: string | null
@@ -208,6 +243,72 @@ export type Database = {
         }
         Relationships: []
       }
+      business_trips: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          country_code: string
+          created_at: string
+          created_by: string | null
+          destination: string | null
+          end_date: string
+          end_time: string
+          id: string
+          meals_provided: Json
+          notes: string | null
+          purpose: string
+          region: string | null
+          rejection_reason: string | null
+          start_date: string
+          start_time: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          country_code: string
+          created_at?: string
+          created_by?: string | null
+          destination?: string | null
+          end_date: string
+          end_time: string
+          id?: string
+          meals_provided?: Json
+          notes?: string | null
+          purpose: string
+          region?: string | null
+          rejection_reason?: string | null
+          start_date: string
+          start_time: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          country_code?: string
+          created_at?: string
+          created_by?: string | null
+          destination?: string | null
+          end_date?: string
+          end_time?: string
+          id?: string
+          meals_provided?: Json
+          notes?: string | null
+          purpose?: string
+          region?: string | null
+          rejection_reason?: string | null
+          start_date?: string
+          start_time?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       employee_work_schedules: {
         Row: {
           break_minutes: number
@@ -285,6 +386,45 @@ export type Database = {
           is_recurring?: boolean | null
           name?: string
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      per_diem_rates: {
+        Row: {
+          country_code: string
+          country_name: string
+          created_at: string
+          full_day_rate: number
+          id: string
+          partial_day_rate: number
+          region: string | null
+          updated_at: string
+          valid_from: string
+          valid_to: string | null
+        }
+        Insert: {
+          country_code: string
+          country_name: string
+          created_at?: string
+          full_day_rate: number
+          id?: string
+          partial_day_rate: number
+          region?: string | null
+          updated_at?: string
+          valid_from: string
+          valid_to?: string | null
+        }
+        Update: {
+          country_code?: string
+          country_name?: string
+          created_at?: string
+          full_day_rate?: number
+          id?: string
+          partial_day_rate?: number
+          region?: string | null
+          updated_at?: string
+          valid_from?: string
+          valid_to?: string | null
         }
         Relationships: []
       }
@@ -477,6 +617,13 @@ export type Database = {
             referencedRelation: "time_templates"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "time_entries_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       time_templates: {
@@ -534,7 +681,15 @@ export type Database = {
           role?: Database["public"]["Enums"]["app_role"]
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "user_roles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
@@ -683,6 +838,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       absence_type: [
@@ -697,3 +855,4 @@ export const Constants = {
     },
   },
 } as const
+

@@ -16,6 +16,20 @@ Versionsnummer. Vier Kategorien:
 Triviales (reine Refactorings, Formatierung, Dependency-Updates ohne sichtbaren
 Effekt) gehört nicht hierher – dafür gibt es die Git-Historie.
 
+## [2.1.1] – 2026-07-01
+
+### Behoben
+- **Anmeldedaten gelangen nicht mehr in die URL** — Wenn das Anmeldeformular abgeschickt wurde, bevor die Seite vollständig geladen war, konnten E-Mail und Passwort im Klartext in der Adresszeile landen (und damit in Verlauf und Server-Logs). Das Formular sendet jetzt grundsätzlich per POST, sodass Zugangsdaten nie in der URL erscheinen.
+
+## [2.1.0] – 2026-07-01
+
+### Neu
+- **Reisekostenabrechnung** — Mitarbeiter erfassen ihre Dienstreisen (Zeitraum, Zielort, Anlass); der Verpflegungsmehraufwand wird automatisch nach den gültigen Sätzen inkl. Mahlzeitenkürzung berechnet. Für Städte mit eigenem Satz lässt sich der Ort gezielt wählen (z. B. Spanien – Palma de Mallorca). Reisen werden von Admin/HR freigegeben und lassen sich als PDF pro Reise sowie als Sammel-Export (PDF/CSV) für die Steuerberatung ausgeben.
+- **Reisekostensätze verwalten** — Admins pflegen die Tagessätze je Land und optional je Stadt/Region mit jahresweiser Gültigkeit; Deutschland und die gängigen Reiseländer sind mit den ab 1. Januar 2026 gültigen BMF-Sätzen vorbelegt.
+
+### Technik
+- **Neue Tabellen `business_trips` und `per_diem_rates`** — inklusive Row-Level-Security (eigene Reisen für Mitarbeiter, Vollzugriff für Admin/HR) und geteiltem Berechnungsmodul mit Unit-Tests.
+
 ## [2.0.0] – 2026-03-17
 
 ### Technik
