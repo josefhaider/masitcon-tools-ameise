@@ -28,6 +28,8 @@ import {
 import { useSidebar } from "@/contexts/SidebarContext";
 import { useRoles } from "@/contexts/permissions-context";
 import { useProfile } from "@/contexts/profile-context";
+import { usePendingApprovals } from "@/hooks/usePendingApprovals";
+import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 
 type NavItem = {
@@ -36,6 +38,7 @@ type NavItem = {
   to: string;
   matchExact?: boolean;
   matchPrefix?: string;
+  badgeCount?: number;
 };
 
 const AppSidebar: React.FC = () => {
@@ -44,6 +47,7 @@ const AppSidebar: React.FC = () => {
   const pathname = pathnameRaw ?? "";
   const router = useRouter();
   const { isAdmin, isApprover, isHrManager } = useRoles();
+  const pendingApprovals = usePendingApprovals();
   const profile = useProfile();
 
   const isCollapsed = !isExpanded && !isHovered;
@@ -71,13 +75,34 @@ const AppSidebar: React.FC = () => {
 
   const genehmigungItems: NavItem[] = [
     ...(isApprover
-      ? [{ label: "Urlaubsanträge", icon: <Check />, to: "/genehmigungen/urlaub" }]
+      ? [
+          {
+            label: "Urlaubsanträge",
+            icon: <Check />,
+            to: "/genehmigungen/urlaub",
+            badgeCount: pendingApprovals.vacation,
+          },
+        ]
       : []),
     ...(isHrManager || isAdmin
-      ? [{ label: "Krankmeldungen", icon: <Thermometer />, to: "/genehmigungen/krankmeldungen" }]
+      ? [
+          {
+            label: "Krankmeldungen",
+            icon: <Thermometer />,
+            to: "/genehmigungen/krankmeldungen",
+            badgeCount: pendingApprovals.sick,
+          },
+        ]
       : []),
     ...(isHrManager || isAdmin
-      ? [{ label: "Reisekosten", icon: <Receipt />, to: "/genehmigungen/reisekosten" }]
+      ? [
+          {
+            label: "Reisekosten",
+            icon: <Receipt />,
+            to: "/genehmigungen/reisekosten",
+            badgeCount: pendingApprovals.travel,
+          },
+        ]
       : []),
   ];
 
@@ -109,22 +134,37 @@ const AppSidebar: React.FC = () => {
     <ul className="flex flex-col gap-4">
       {items.map((item) => {
         const active = isActive(item);
+        const count = item.badgeCount ?? 0;
+        const badgeLabel = count > 99 ? "99+" : String(count);
         return (
           <li key={item.to}>
             <Link
               href={item.to}
-              className={`menu-item group ${
+              className={`menu-item group relative ${
                 active ? "menu-item-active" : "menu-item-inactive"
               } ${isCollapsed ? "lg:justify-center" : "lg:justify-start"}`}
             >
               <span
-                className={
+                className={`relative ${
                   active ? "menu-item-icon-active" : "menu-item-icon-inactive"
-                }
+                }`}
               >
                 {item.icon}
+                {count > 0 && !showLabel && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute -top-2 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none font-semibold text-primary-foreground"
+                  >
+                    {badgeLabel}
+                  </span>
+                )}
               </span>
               {showLabel && <span>{item.label}</span>}
+              {count > 0 && showLabel && (
+                <Badge className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs">
+                  {badgeLabel}
+                </Badge>
+              )}
             </Link>
           </li>
         );

@@ -16,6 +16,11 @@ Versionsnummer. Vier Kategorien:
 Triviales (reine Refactorings, Formatierung, Dependency-Updates ohne sichtbaren
 Effekt) gehört nicht hierher – dafür gibt es die Git-Historie.
 
+## [2.2.0] – 2026-07-01
+
+### Neu
+- **Offene Genehmigungen im Menü** — Neben den Menüpunkten „Urlaubsanträge", „Krankmeldungen" und „Reisekosten" zeigt ein kleiner Zähler, wie viele Vorgänge auf Bearbeitung warten (offene Anträge bzw. bei Krankmeldungen ausstehende Atteste). Der Zähler ist nur für Personen sichtbar, die die jeweilige Genehmigung auch erteilen dürfen, und aktualisiert sich beim Navigieren.
+
 ## [2.1.1] – 2026-07-01
 
 ### Behoben
