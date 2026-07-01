@@ -91,7 +91,14 @@ export default function LoginPage() {
 
           <div className="px-8 pb-8">
             {view === "login" ? (
-              <form onSubmit={handleSignIn} className="space-y-4">
+              <form
+                onSubmit={handleSignIn}
+                method="post"
+                className="space-y-4"
+              >
+                {/* method="post": Falls der onSubmit-Handler mal nicht greift
+                    (z.B. vor abgeschlossener Hydration), verhindert dies, dass
+                    E-Mail/Passwort per nativem GET im Klartext in die URL geraten. */}
                 <div className="space-y-1.5">
                   <Label
                     htmlFor="signin-email"
@@ -198,6 +205,7 @@ export default function LoginPage() {
                 ) : (
                   <form
                     onSubmit={handleForgotPassword}
+                    method="post"
                     className="space-y-4"
                   >
                     <p className="text-xs text-gray-500 text-center">
