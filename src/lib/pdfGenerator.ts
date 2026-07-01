@@ -476,6 +476,52 @@ export function generateBalanceReportPDF(data: BalanceReportData): void {
 /** Euro-Betrag für PDF (deutsches Format, z. B. "56,00 €"). */
 const eurPdf = (n: number): string => `${n.toFixed(2).replace('.', ',')} €`;
 
+/**
+ * Kürzungswert einer Mahlzeit für die Tabelle ("- 5,60 €" bzw. "-").
+ * Bewusst ASCII-Bindestrich, da die jsPDF-Standardschrift (CP1252) das
+ * typografische Minus (−) nicht kennt und als Ersatzglyph darstellt.
+ */
+const reductionCell = (n: number): string => (n > 0 ? `- ${eurPdf(n)}` : '-');
+
+const PAGE_LEFT = 14;
+const PAGE_RIGHT = 196; // A4 hoch: 210 − 14
+
+/**
+ * Zeichnet die Tagesaufstellung einer Reise (Datum, Art, Tagessatz,
+ * Mahlzeitenkürzung je Mahlzeit, Betrag) und gibt das Ende-Y zurück.
+ */
+function drawTripDayTable(doc: jsPDF, startY: number, days: TravelExpenseDay[], total: number): number {
+  autoTable(doc, {
+    startY,
+    head: [['Datum', 'Art', 'Tagessatz', 'Frühstück', 'Mittag', 'Abend', 'Betrag']],
+    body: days.map((d) => [
+      format(new Date(`${d.date}T00:00:00`), 'EEE, dd.MM.yy', { locale: de }),
+      travelDayKindLabel(d.kind),
+      eurPdf(d.baseRate),
+      reductionCell(d.reductions.breakfast),
+      reductionCell(d.reductions.lunch),
+      reductionCell(d.reductions.dinner),
+      eurPdf(d.amount),
+    ]),
+    foot: [['', '', '', '', '', 'Summe', eurPdf(total)]],
+    theme: 'grid',
+    headStyles: { fillColor: [232, 235, 242], textColor: [20, 20, 20], fontStyle: 'bold', fontSize: 8 },
+    footStyles: { fillColor: [244, 246, 250], textColor: [0, 0, 0], fontStyle: 'bold', fontSize: 8 },
+    styles: { fontSize: 8, cellPadding: 1.6 },
+    columnStyles: {
+      0: { cellWidth: 28 },
+      1: { cellWidth: 24 },
+      2: { cellWidth: 24, halign: 'right' },
+      3: { cellWidth: 24, halign: 'right' },
+      4: { cellWidth: 22, halign: 'right' },
+      5: { cellWidth: 22, halign: 'right' },
+      6: { cellWidth: 26, halign: 'right', fontStyle: 'bold' },
+    },
+    margin: { left: PAGE_LEFT, right: PAGE_LEFT },
+  });
+  return doc.lastAutoTable.finalY;
+}
+
 export interface BusinessTripPdfData {
   employeeName: string;
   employeeNumber: string | null;
@@ -507,10 +553,10 @@ export function generateBusinessTripPDF(data: BusinessTripPdfData): void {
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(0, 0, 0);
-  doc.text('Reisekostenabrechnung', 196, 15, { align: 'right' });
+  doc.text('Reisekostenabrechnung', PAGE_RIGHT, 15, { align: 'right' });
   doc.setFontSize(11);
   doc.setFont('helvetica', 'normal');
-  doc.text('Verpflegungsmehraufwand', 196, 22, { align: 'right' });
+  doc.text('Verpflegungsmehraufwand', PAGE_RIGHT, 22, { align: 'right' });
 
   // Stammdaten
   doc.setFontSize(10);
@@ -528,37 +574,12 @@ export function generateBusinessTripPDF(data: BusinessTripPdfData): void {
   line('Abreise:', data.startLabel);
   line('Rückkehr:', data.endLabel);
 
-  const tableData = data.days.map((d) => [
-    format(new Date(`${d.date}T00:00:00`), 'EEE, dd.MM.yyyy', { locale: de }),
-    travelDayKindLabel(d.kind),
-    eurPdf(d.baseRate),
-    d.reductions.total > 0 ? `− ${eurPdf(d.reductions.total)}` : '–',
-    eurPdf(d.amount),
-  ]);
+  const finalY = drawTripDayTable(doc, y + 2, data.days, data.total) + 10;
 
-  autoTable(doc, {
-    startY: y + 2,
-    head: [['Datum', 'Art', 'Tagessatz', 'Kürzung', 'Betrag']],
-    body: tableData,
-    foot: [['', '', '', 'Gesamt', eurPdf(data.total)]],
-    theme: 'striped',
-    headStyles: { fillColor: [16, 39, 87] },
-    footStyles: { fillColor: [200, 200, 200], textColor: [0, 0, 0], fontStyle: 'bold' },
-    styles: { fontSize: 10, cellPadding: 3 },
-    columnStyles: {
-      0: { cellWidth: 55 },
-      1: { cellWidth: 35 },
-      2: { cellWidth: 30, halign: 'right' },
-      3: { cellWidth: 30, halign: 'right' },
-      4: { cellWidth: 32, halign: 'right', fontStyle: 'bold' },
-    },
-  });
-
-  const finalY = doc.lastAutoTable.finalY + 10;
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
   doc.text(
-    'Pauschalen für Verpflegungsmehraufwand gem. § 9 Abs. 4a EStG. Kürzung bei gestellten Mahlzeiten: Frühstück −20 %, Mittag-/Abendessen je −40 % des vollen Tagessatzes.',
+    'Pauschalen für Verpflegungsmehraufwand gem. § 9 Abs. 4a EStG. Kürzung bei gestellten Mahlzeiten: Frühstück -20 %, Mittag-/Abendessen je -40 % des vollen Tagessatzes.',
     14,
     finalY,
     { maxWidth: 182 }
@@ -569,30 +590,41 @@ export function generateBusinessTripPDF(data: BusinessTripPdfData): void {
   doc.save(`Reisekostenabrechnung_${safeName}_${data.days[0]?.date ?? ''}.pdf`);
 }
 
-export interface TravelExpenseSummaryRow {
-  employeeName: string;
-  employeeNumber: string | null;
+export interface TravelExpenseSummaryTrip {
   purpose: string;
   destination: string | null;
-  countryName: string;
-  startLabel: string; // "01.03.2026"
+  locationName: string; // Land inkl. Region
+  startLabel: string; // "01.03.2026 08:00"
   endLabel: string;
+  days: TravelExpenseDay[];
+  total: number;
+}
+
+export interface TravelExpenseSummaryEmployee {
+  employeeName: string;
+  employeeNumber: string | null;
+  trips: TravelExpenseSummaryTrip[];
   total: number;
 }
 
 export interface TravelExpenseSummaryData {
   fromLabel: string; // "01.01.2026"
   toLabel: string;
-  rows: TravelExpenseSummaryRow[];
+  employees: TravelExpenseSummaryEmployee[];
+  grandTotal: number;
 }
 
 /**
- * Sammel-Reisekostenabrechnung (Verpflegungsmehraufwand) über einen Zeitraum –
- * eine Zeile je freigegebener Dienstreise, für die Steuerberatung.
+ * Sammel-Reisekostenabrechnung (Verpflegungsmehraufwand) über einen Zeitraum,
+ * gruppiert je Mitarbeiter mit vollständiger Tagesaufstellung je Reise –
+ * damit die Steuerberatung jede Berechnung nachvollziehen kann.
  */
 export function generateTravelExpenseSummaryPDF(data: TravelExpenseSummaryData): void {
-  const doc = new jsPDF({ orientation: 'landscape' });
+  const doc = new jsPDF();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const contentWidth = PAGE_RIGHT - PAGE_LEFT;
 
+  // Kopf (nur Seite 1)
   try {
     doc.addImage(MASITCON_LOGO_BASE64, 'PNG', 14, 10, 50, 14);
   } catch {
@@ -601,49 +633,70 @@ export function generateTravelExpenseSummaryPDF(data: TravelExpenseSummaryData):
     doc.setTextColor(16, 39, 87);
     doc.text('masitcon', 14, 18);
   }
-
-  doc.setFontSize(18);
+  doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(0, 0, 0);
-  doc.text('Reisekosten – Verpflegungsmehraufwand', 283, 15, { align: 'right' });
-  doc.setFontSize(11);
+  doc.text('Reisekostenabrechnung', PAGE_RIGHT, 15, { align: 'right' });
+  doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Zeitraum: ${data.fromLabel} – ${data.toLabel}`, 283, 22, { align: 'right' });
-
+  doc.text('Verpflegungsmehraufwand', PAGE_RIGHT, 21, { align: 'right' });
+  doc.text(`Zeitraum: ${data.fromLabel} – ${data.toLabel}`, PAGE_RIGHT, 27, { align: 'right' });
   doc.setFontSize(9);
-  doc.text(`Erstellt am: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`, 14, 30);
+  doc.text(`Erstellt am: ${format(new Date(), 'dd.MM.yyyy HH:mm', { locale: de })}`, PAGE_LEFT, 30);
 
-  const total = data.rows.reduce((sum, r) => sum + r.total, 0);
+  let y = 40;
+  const ensure = (needed: number) => {
+    if (y + needed > pageHeight - 16) {
+      doc.addPage();
+      y = 20;
+    }
+  };
 
-  const tableData = data.rows.map((r) => [
-    r.employeeName,
-    r.employeeNumber || '-',
-    r.purpose,
-    `${r.destination ? `${r.destination}, ` : ''}${r.countryName}`,
-    r.startLabel,
-    r.endLabel,
-    eurPdf(r.total),
-  ]);
+  for (const emp of data.employees) {
+    ensure(24);
+    // Mitarbeiter-Kopfzeile (blaue Leiste)
+    doc.setFillColor(16, 39, 87);
+    doc.rect(PAGE_LEFT, y, contentWidth, 7, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text(`${emp.employeeName}${emp.employeeNumber ? `  (Nr. ${emp.employeeNumber})` : ''}`, PAGE_LEFT + 2, y + 5);
+    doc.setTextColor(0, 0, 0);
+    y += 11;
 
-  autoTable(doc, {
-    startY: 35,
-    head: [['Mitarbeiter', 'P.Nr.', 'Anlass', 'Ziel', 'Von', 'Bis', 'Betrag']],
-    body: tableData,
-    foot: [[`GESAMT (${data.rows.length})`, '', '', '', '', '', eurPdf(total)]],
-    theme: 'striped',
-    headStyles: { fillColor: [16, 39, 87] },
-    footStyles: { fillColor: [200, 200, 200], textColor: [0, 0, 0], fontStyle: 'bold' },
-    styles: { fontSize: 9, cellPadding: 2 },
-    columnStyles: {
-      0: { cellWidth: 45 },
-      1: { cellWidth: 18, halign: 'center' },
-      2: { cellWidth: 60 },
-      3: { cellWidth: 50 },
-      4: { cellWidth: 25, halign: 'center' },
-      5: { cellWidth: 25, halign: 'center' },
-      6: { cellWidth: 28, halign: 'right', fontStyle: 'bold' },
-    },
-  });
+    for (const trip of emp.trips) {
+      ensure(34);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text(trip.purpose, PAGE_LEFT, y);
+      y += 5;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(90, 90, 90);
+      const meta = `${trip.destination ? `${trip.destination}, ` : ''}${trip.locationName}  ·  ${trip.startLabel} – ${trip.endLabel}`;
+      doc.text(meta, PAGE_LEFT, y);
+      doc.setTextColor(0, 0, 0);
+
+      y = drawTripDayTable(doc, y + 2, trip.days, trip.total) + 7;
+    }
+
+    ensure(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(`Summe ${emp.employeeName}: ${eurPdf(emp.total)}`, PAGE_RIGHT, y, { align: 'right' });
+    y += 10;
+  }
+
+  // Gesamtsumme
+  ensure(14);
+  doc.setDrawColor(16, 39, 87);
+  doc.setLineWidth(0.5);
+  doc.line(PAGE_LEFT, y, PAGE_RIGHT, y);
+  y += 7;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text('Gesamtsumme Verpflegungsmehraufwand', PAGE_LEFT, y);
+  doc.text(eurPdf(data.grandTotal), PAGE_RIGHT, y, { align: 'right' });
 
   doc.save(`Reisekosten_VMA_${data.fromLabel.replace(/\./g, '-')}_${data.toLabel.replace(/\./g, '-')}.pdf`);
 }
