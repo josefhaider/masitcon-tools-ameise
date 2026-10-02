@@ -375,31 +375,31 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
             return (
               <Collapsible key={periodKey} open={isExpanded} onOpenChange={() => togglePeriod(periodKey)}>
                 <div className="border rounded-lg">
-                  <CollapsibleTrigger className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                      <Calendar className="h-4 w-4" />
-                      <span className="font-medium">{label}</span>
-                      {isActive && (
-                        <Badge variant="default" className="ml-2">Aktuell</Badge>
-                      )}
-                      <span className="text-sm text-muted-foreground">
-                        ({period.days.length} {period.days.length === 1 ? 'Tag' : 'Tage'})
-                      </span>
-                    </div>
+                  <div className="flex items-center hover:bg-muted/50 transition-colors">
+                    <CollapsibleTrigger className="flex-1 min-w-0 px-4 py-3 flex items-center text-left">
+                      <div className="flex items-center gap-3">
+                        {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        <Calendar className="h-4 w-4" />
+                        <span className="font-medium">{label}</span>
+                        {isActive && (
+                          <Badge variant="default" className="ml-2">Aktuell</Badge>
+                        )}
+                        <span className="text-sm text-muted-foreground">
+                          ({period.days.length} {period.days.length === 1 ? 'Tag' : 'Tage'})
+                        </span>
+                      </div>
+                    </CollapsibleTrigger>
                     {isActive && !period.valid_to && (
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="ghost"
                         size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleClosePeriod(period);
-                        }}
+                        className="mr-4"
+                        onClick={() => handleClosePeriod(period)}
                       >
                         Periode beenden
                       </Button>
                     )}
-                  </CollapsibleTrigger>
+                  </div>
 
                   <CollapsibleContent>
                     <div className="p-4 border-t">
