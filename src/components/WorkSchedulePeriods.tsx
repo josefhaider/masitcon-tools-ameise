@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { format } from 'date-fns';
+import { format, subDays } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,6 +37,14 @@ interface WorkSchedulePeriodsProps {
   periods: SchedulePeriod[];
   onUpdate: () => void;
 }
+
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+  return fallback;
+};
 
 const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsProps) => {
   const [expandedPeriods, setExpandedPeriods] = useState<string[]>(
@@ -107,7 +115,24 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
       return;
     }
 
+    let closedIds: string[] = [];
     try {
+      // Unbefristete Vorgängerperiode am Tag vor "Gültig ab" beenden, sonst lehnt der
+      // Überlappungs-Trigger die neue Periode ab. Bei befristeter neuer Periode nicht,
+      // da die Vorgängerperiode danach weiterlaufen müsste.
+      if (!newPeriodForm.valid_to) {
+        const closeTo = format(subDays(new Date(`${newPeriodForm.valid_from}T00:00:00`), 1), 'yyyy-MM-dd');
+        const { data: closed, error: closeError } = await supabase
+          .from('employee_work_schedules')
+          .update({ valid_to: closeTo })
+          .eq('user_id', userId)
+          .is('valid_to', null)
+          .lt('valid_from', newPeriodForm.valid_from)
+          .select('id');
+        if (closeError) throw closeError;
+        closedIds = (closed ?? []).map(r => r.id);
+      }
+
       // If copying from another period
       if (newPeriodForm.copyFromPeriod) {
         const sourcePeriod = periods.find(p => getPeriodKey(p) === newPeriodForm.copyFromPeriod);
@@ -162,8 +187,14 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
         onUpdate();
       }
     } catch (error: unknown) {
+      if (closedIds.length > 0) {
+        await supabase
+          .from('employee_work_schedules')
+          .update({ valid_to: null })
+          .in('id', closedIds);
+      }
       console.error('Error creating period:', error);
-      toast.error(error instanceof Error ? error.message : 'Fehler beim Erstellen der Periode');
+      toast.error(getErrorMessage(error, 'Fehler beim Erstellen der Periode'));
     }
   };
 
@@ -208,7 +239,7 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
       onUpdate();
     } catch (error: unknown) {
       console.error('Error saving day:', error);
-      toast.error(error instanceof Error ? error.message : 'Fehler beim Speichern');
+      toast.error(getErrorMessage(error, 'Fehler beim Speichern'));
     }
   };
 
@@ -258,7 +289,7 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
       onUpdate();
     } catch (error: unknown) {
       console.error('Error adding day:', error);
-      toast.error(error instanceof Error ? error.message : 'Fehler beim Hinzufügen');
+      toast.error(getErrorMessage(error, 'Fehler beim Hinzufügen'));
     }
   };
 
@@ -292,7 +323,7 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
       onUpdate();
     } catch (error: unknown) {
       console.error('Error deleting day:', error);
-      toast.error(error instanceof Error ? error.message : 'Fehler beim Löschen');
+      toast.error(getErrorMessage(error, 'Fehler beim Löschen'));
     }
   };
 
@@ -313,7 +344,7 @@ const WorkSchedulePeriods = ({ userId, periods, onUpdate }: WorkSchedulePeriodsP
       onUpdate();
     } catch (error: unknown) {
       console.error('Error closing period:', error);
-      toast.error(error instanceof Error ? error.message : 'Fehler beim Beenden der Periode');
+      toast.error(getErrorMessage(error, 'Fehler beim Beenden der Periode'));
     }
   };
 

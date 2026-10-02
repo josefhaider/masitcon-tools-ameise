@@ -16,6 +16,12 @@ Versionsnummer. Vier Kategorien:
 Triviales (reine Refactorings, Formatierung, Dependency-Updates ohne sichtbaren
 Effekt) gehört nicht hierher – dafür gibt es die Git-Historie.
 
+## [2.2.1] – 2026-10-02
+
+### Behoben
+- **Neue Arbeitszeit-Periode speichern** — Eine neue Periode scheiterte, wenn die bisherige unbefristet war. Diese wird jetzt automatisch am Vortag beendet.
+- **Fehlermeldungen bei Arbeitszeiten** — Statt einer allgemeinen Meldung wird jetzt der tatsächliche Grund angezeigt.
+
 ## [2.2.0] – 2026-07-01
 
 ### Neu
